@@ -56,6 +56,7 @@ func createCmd() *cobra.Command {
 	var cpus int
 	var memory int
 	var disk int
+	var sshKeyPath string
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -87,6 +88,15 @@ func createCmd() *cobra.Command {
 			// Set paths
 			newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, name)
 
+			// Read SSH public key if provided
+			if sshKeyPath != "" {
+				keyData, err := os.ReadFile(sshKeyPath)
+				if err != nil {
+					return fmt.Errorf("failed to read SSH public key from %s: %w", sshKeyPath, err)
+				}
+				newVM.SSHPublicKey = string(keyData)
+			}
+
 			// Save VM config
 			if err := newVM.Save(paths.VMs); err != nil {
 				return fmt.Errorf("failed to save VM config: %w", err)
@@ -95,6 +105,9 @@ func createCmd() *cobra.Command {
 			fmt.Printf("Created VM '%s' (ID: %s)\n", name, newVM.ID)
 			fmt.Printf("  CPUs: %d, Memory: %d MB, Disk: %d MB\n", newVM.CPUs, newVM.MemoryMB, newVM.DiskSizeMB)
 			fmt.Printf("  TAP device: %s, MAC: %s\n", newVM.TapDevice, newVM.MacAddress)
+			if newVM.SSHPublicKey != "" {
+				fmt.Printf("  SSH key: configured\n")
+			}
 			return nil
 		},
 	}
@@ -102,6 +115,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "Number of vCPUs")
 	cmd.Flags().IntVar(&memory, "memory", 512, "Memory in MB")
 	cmd.Flags().IntVar(&disk, "disk", 1024, "Disk size in MB")
+	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file for root access")
 
 	return cmd
 }
@@ -259,6 +273,14 @@ func startCmd() *cobra.Command {
 			}
 			existingVM.RootfsPath = vmRootfs
 			existingVM.KernelPath = imgMgr.GetDefaultKernelPath()
+
+			// Inject SSH key if configured
+			if existingVM.SSHPublicKey != "" {
+				fmt.Println("Injecting SSH public key...")
+				if err := image.InjectSSHKey(existingVM.RootfsPath, existingVM.SSHPublicKey); err != nil {
+					return fmt.Errorf("failed to inject SSH key: %w", err)
+				}
+			}
 
 			// Setup networking
 			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
@@ -653,6 +675,13 @@ func autostartCmd() *cobra.Command {
 				}
 				v.RootfsPath = vmRootfs
 				v.KernelPath = imgMgr.GetDefaultKernelPath()
+
+				// Inject SSH key if configured
+				if v.SSHPublicKey != "" {
+					if err := image.InjectSSHKey(v.RootfsPath, v.SSHPublicKey); err != nil {
+						fmt.Printf("  Warning: failed to inject SSH key: %v\n", err)
+					}
+				}
 
 				// Create TAP if needed
 				if !netMgr.TapExists(v.TapDevice) {

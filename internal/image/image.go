@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -186,4 +188,56 @@ func listFiles(dir string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// InjectSSHKey injects an SSH public key into a rootfs image
+// This mounts the ext4 image and writes the key to /root/.ssh/authorized_keys
+func InjectSSHKey(rootfsPath, sshPublicKey string) error {
+	if sshPublicKey == "" {
+		return nil
+	}
+
+	// Ensure the key ends with a newline
+	sshPublicKey = strings.TrimSpace(sshPublicKey) + "\n"
+
+	// Create a temporary mount point
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	// Mount the rootfs image
+	mountCmd := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint)
+	if output, err := mountCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+
+	// Ensure we unmount even if there's an error
+	defer func() {
+		umountCmd := exec.Command("umount", mountPoint)
+		umountCmd.Run() // Best effort unmount
+	}()
+
+	// Create /root/.ssh directory if it doesn't exist
+	sshDir := filepath.Join(mountPoint, "root", ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return fmt.Errorf("failed to create .ssh directory: %w", err)
+	}
+
+	// Write the authorized_keys file
+	authKeysPath := filepath.Join(sshDir, "authorized_keys")
+	if err := os.WriteFile(authKeysPath, []byte(sshPublicKey), 0600); err != nil {
+		return fmt.Errorf("failed to write authorized_keys: %w", err)
+	}
+
+	// Ensure correct ownership (root:root = 0:0)
+	if err := os.Chown(sshDir, 0, 0); err != nil {
+		return fmt.Errorf("failed to set .ssh ownership: %w", err)
+	}
+	if err := os.Chown(authKeysPath, 0, 0); err != nil {
+		return fmt.Errorf("failed to set authorized_keys ownership: %w", err)
+	}
+
+	return nil
 }
