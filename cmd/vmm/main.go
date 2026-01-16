@@ -267,7 +267,7 @@ func startCmd() *cobra.Command {
 			}
 
 			// Create VM-specific rootfs if needed
-			vmRootfs, err := imgMgr.CreateVMRootfs(name, paths.VMs)
+			vmRootfs, err := imgMgr.CreateVMRootfs(name, paths.VMs, existingVM.DiskSizeMB)
 			if err != nil {
 				return fmt.Errorf("failed to create VM rootfs: %w", err)
 			}
@@ -448,8 +448,34 @@ func sshCmd() *cobra.Command {
 			sshArgs := []string{
 				"-o", "StrictHostKeyChecking=no",
 				"-o", "UserKnownHostsFile=/dev/null",
-				fmt.Sprintf("%s@%s", user, existingVM.IPAddress),
 			}
+
+			// If running under sudo, use the original user's SSH keys
+			if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+				// Get the original user's home directory
+				userHome := fmt.Sprintf("/home/%s", sudoUser)
+				if sudoUser == "root" {
+					userHome = "/root"
+				}
+
+				// Look for common SSH key files
+				keyFiles := []string{
+					"id_ed25519",
+					"id_rsa",
+					"id_ecdsa",
+					"id_dsa",
+				}
+
+				for _, keyFile := range keyFiles {
+					keyPath := fmt.Sprintf("%s/.ssh/%s", userHome, keyFile)
+					if _, err := os.Stat(keyPath); err == nil {
+						sshArgs = append(sshArgs, "-i", keyPath)
+						break
+					}
+				}
+			}
+
+			sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", user, existingVM.IPAddress))
 
 			// Append any additional SSH args
 			if len(args) > 1 {
@@ -668,7 +694,7 @@ func autostartCmd() *cobra.Command {
 				}
 
 				// Create rootfs if needed
-				vmRootfs, err := imgMgr.CreateVMRootfs(v.Name, paths.VMs)
+				vmRootfs, err := imgMgr.CreateVMRootfs(v.Name, paths.VMs, v.DiskSizeMB)
 				if err != nil {
 					fmt.Printf("  Error: failed to create rootfs: %v\n", err)
 					continue
