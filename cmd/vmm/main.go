@@ -57,6 +57,7 @@ func createCmd() *cobra.Command {
 	var memory int
 	var disk int
 	var sshKeyPath string
+	var dnsServers []string
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -84,6 +85,7 @@ func createCmd() *cobra.Command {
 			newVM.DiskSizeMB = disk
 			newVM.MacAddress = newVM.GenerateMacAddress()
 			newVM.TapDevice = network.GenerateTapName(newVM.ID)
+			newVM.DNSServers = dnsServers
 
 			// Set paths
 			newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, name)
@@ -108,6 +110,9 @@ func createCmd() *cobra.Command {
 			if newVM.SSHPublicKey != "" {
 				fmt.Printf("  SSH key: configured\n")
 			}
+			if len(newVM.DNSServers) > 0 {
+				fmt.Printf("  DNS servers: %v\n", newVM.DNSServers)
+			}
 			return nil
 		},
 	}
@@ -116,6 +121,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().IntVar(&memory, "memory", 512, "Memory in MB")
 	cmd.Flags().IntVar(&disk, "disk", 1024, "Disk size in MB")
 	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file for root access")
+	cmd.Flags().StringSliceVar(&dnsServers, "dns", nil, "Custom DNS servers (can be specified multiple times)")
 
 	return cmd
 }
@@ -280,6 +286,12 @@ func startCmd() *cobra.Command {
 				if err := image.InjectSSHKey(existingVM.RootfsPath, existingVM.SSHPublicKey); err != nil {
 					return fmt.Errorf("failed to inject SSH key: %w", err)
 				}
+			}
+
+			// Inject DNS configuration
+			fmt.Println("Configuring DNS...")
+			if err := image.InjectDNSConfig(existingVM.RootfsPath, existingVM.DNSServers); err != nil {
+				return fmt.Errorf("failed to inject DNS config: %w", err)
 			}
 
 			// Setup networking
@@ -707,6 +719,11 @@ func autostartCmd() *cobra.Command {
 					if err := image.InjectSSHKey(v.RootfsPath, v.SSHPublicKey); err != nil {
 						fmt.Printf("  Warning: failed to inject SSH key: %v\n", err)
 					}
+				}
+
+				// Inject DNS configuration
+				if err := image.InjectDNSConfig(v.RootfsPath, v.DNSServers); err != nil {
+					fmt.Printf("  Warning: failed to inject DNS config: %v\n", err)
 				}
 
 				// Create TAP if needed

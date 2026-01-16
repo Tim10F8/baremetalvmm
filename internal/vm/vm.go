@@ -37,6 +37,7 @@ type VM struct {
 	MacAddress   string    `json:"mac_address"`
 	SSHPort      int       `json:"ssh_port"`
 	SSHPublicKey string    `json:"ssh_public_key,omitempty"`
+	DNSServers   []string  `json:"dns_servers,omitempty"`
 	SocketPath   string    `json:"socket_path"`
 	PID          int       `json:"pid"`
 	AutoStart    bool      `json:"auto_start"`
