@@ -28,7 +28,7 @@ A lightweight CLI tool to manage Firecracker microVMs for development environmen
 ```bash
 # Clone the repository
 git clone https://github.com/raesene/baremetalvmm.git
-cd vmm
+cd baremetalvmm
 
 # Build and install (requires root)
 sudo ./scripts/install.sh
@@ -39,7 +39,11 @@ The install script will:
 - Install it to `/usr/local/bin`
 - Download Firecracker v1.11.0
 - Create data directories in `/var/lib/vmm`
-- Install the systemd service
+
+To optionally install the systemd service for auto-start on boot:
+```bash
+sudo ./scripts/install-service.sh
+```
 
 ### Basic Usage
 
@@ -230,10 +234,13 @@ IP addresses are allocated sequentially from 172.16.0.2 when a VM is started (no
 
 ## Auto-Start on Boot
 
-To enable VMs to automatically start after a host reboot:
+To enable VMs to automatically start after a host reboot, first install the systemd service:
 
 ```bash
-# Enable the systemd service
+# Install the systemd service (if not already installed)
+sudo ./scripts/install-service.sh
+
+# Enable the service
 sudo systemctl enable vmm
 
 # Check status
@@ -504,7 +511,8 @@ go test ./...
 │   └── mount/                # Host directory mount management
 ├── scripts/
 │   ├── install.sh            # Installation script
-│   └── vmm.service           # Systemd service
+│   ├── install-service.sh    # Systemd service installation (optional)
+│   └── vmm.service           # Systemd service unit file
 └── go.mod                    # Go modules
 ```
 

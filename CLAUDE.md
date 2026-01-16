@@ -27,9 +27,11 @@ baremetalvmm/
 │   ├── vm/vm.go              # VM struct, state machine, persistence
 │   ├── firecracker/client.go # Firecracker SDK wrapper
 │   ├── network/network.go    # TAP, bridge, iptables management
-│   └── image/image.go        # Kernel/rootfs download and management
+│   ├── image/image.go        # Kernel/rootfs download and management
+│   └── mount/mount.go        # Host directory mount management
 ├── scripts/
-│   ├── install.sh            # Installation script
+│   ├── install.sh            # Installation script (binary + Firecracker)
+│   ├── install-service.sh    # Systemd service installation (optional)
 │   └── vmm.service           # Systemd unit file
 ├── go.mod, go.sum            # Dependencies
 ├── README.md                 # User documentation

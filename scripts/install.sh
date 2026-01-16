@@ -2,10 +2,9 @@
 set -e
 
 # VMM Installation Script
-# This script installs the VMM binary and sets up the systemd service
+# This script installs the VMM binary and Firecracker
 
 INSTALL_DIR="/usr/local/bin"
-SERVICE_DIR="/etc/systemd/system"
 DATA_DIR="/var/lib/vmm"
 
 echo "VMM Installer"
@@ -41,12 +40,7 @@ chmod +x "$INSTALL_DIR/vmm"
 
 # Create data directories
 echo "Creating data directories..."
-mkdir -p "$DATA_DIR"/{config,vms,images/kernels,images/rootfs,sockets,logs,state}
-
-# Install systemd service
-echo "Installing systemd service..."
-cp scripts/vmm.service "$SERVICE_DIR/vmm.service"
-systemctl daemon-reload
+mkdir -p "$DATA_DIR"/{config,vms,images/kernels,images/rootfs,mounts,sockets,logs,state}
 
 # Download Firecracker if not present
 FC_VERSION="v1.11.0"
@@ -68,11 +62,11 @@ echo "Installation complete!"
 echo ""
 echo "Next steps:"
 echo "  1. Initialize VMM:     vmm config init"
-echo "  2. Pull images:        vmm image pull"
-echo "  3. Create a VM:        vmm create myvm"
-echo "  4. Start the VM:       vmm start myvm"
+echo "  2. Pull images:        sudo vmm image pull"
+echo "  3. Create a VM:        sudo vmm create myvm --ssh-key ~/.ssh/id_ed25519.pub"
+echo "  4. Start the VM:       sudo vmm start myvm"
 echo "  5. SSH into the VM:    vmm ssh myvm"
 echo ""
-echo "To enable auto-start on boot:"
-echo "  sudo systemctl enable vmm"
+echo "Optional - To enable auto-start on boot, run:"
+echo "  sudo ./scripts/install-service.sh"
 echo ""
