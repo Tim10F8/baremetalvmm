@@ -34,6 +34,7 @@ type Paths struct {
 	Sockets  string
 	Logs     string
 	State    string
+	Mounts   string
 }
 
 // DefaultConfig returns a configuration with sensible defaults
@@ -58,6 +59,7 @@ func (c *Config) GetPaths() *Paths {
 		Sockets: filepath.Join(c.DataDir, "sockets"),
 		Logs:    filepath.Join(c.DataDir, "logs"),
 		State:   filepath.Join(c.DataDir, "state"),
+		Mounts:  filepath.Join(c.DataDir, "mounts"),
 	}
 }
 
@@ -72,6 +74,7 @@ func (c *Config) EnsureDirectories() error {
 		paths.Sockets,
 		paths.Logs,
 		paths.State,
+		paths.Mounts,
 	}
 
 	for _, dir := range dirs {

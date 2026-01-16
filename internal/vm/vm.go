@@ -43,8 +43,9 @@ type VM struct {
 	PID          int       `json:"pid"`
 	AutoStart    bool      `json:"auto_start"`
 	CreatedAt    time.Time `json:"created_at"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
+	StartedAt    time.Time     `json:"started_at,omitempty"`
 	PortForwards []PortForward `json:"port_forwards,omitempty"`
+	Mounts       []Mount       `json:"mounts,omitempty"`
 }
 
 // PortForward represents a port forwarding rule
@@ -52,6 +53,14 @@ type PortForward struct {
 	HostPort  int    `json:"host_port"`
 	GuestPort int    `json:"guest_port"`
 	Protocol  string `json:"protocol"` // tcp or udp
+}
+
+// Mount represents a host directory mount configuration
+type Mount struct {
+	HostPath  string `json:"host_path"`  // Path on host to mount
+	GuestTag  string `json:"guest_tag"`  // Tag/name for mount point (/mnt/<tag>)
+	ReadOnly  bool   `json:"read_only"`  // Whether mount is read-only
+	ImagePath string `json:"image_path"` // Path to the ext4 image created from host dir
 }
 
 // NewVM creates a new VM with default settings

@@ -37,6 +37,13 @@ func NewClient() *Client {
 	}
 }
 
+// MountDrive represents an additional block device for host directory mounts
+type MountDrive struct {
+	ImagePath string
+	Tag       string
+	ReadOnly  bool
+}
+
 // VMConfig holds the configuration needed to start a Firecracker VM
 type VMConfig struct {
 	SocketPath   string
@@ -50,6 +57,7 @@ type VMConfig struct {
 	LogPath      string
 	IPAddress    string
 	Gateway      string
+	MountDrives  []MountDrive
 }
 
 // StartVM starts a Firecracker microVM with the given configuration
@@ -77,19 +85,33 @@ func (c *Client) StartVM(ctx context.Context, cfg *VMConfig) (*sdk.Machine, erro
 		kernelArgs += fmt.Sprintf(" ip=%s::%s:255.255.0.0::eth0:off", cfg.IPAddress, cfg.Gateway)
 	}
 
+	// Build drives list starting with rootfs
+	drives := []models.Drive{
+		{
+			DriveID:      sdk.String("rootfs"),
+			PathOnHost:   sdk.String(cfg.RootfsPath),
+			IsRootDevice: sdk.Bool(true),
+			IsReadOnly:   sdk.Bool(false),
+		},
+	}
+
+	// Add mount drives (vdb, vdc, etc.)
+	for i, mountDrive := range cfg.MountDrives {
+		driveID := fmt.Sprintf("mount%d", i)
+		drives = append(drives, models.Drive{
+			DriveID:      sdk.String(driveID),
+			PathOnHost:   sdk.String(mountDrive.ImagePath),
+			IsRootDevice: sdk.Bool(false),
+			IsReadOnly:   sdk.Bool(mountDrive.ReadOnly),
+		})
+	}
+
 	// Build Firecracker configuration
 	fcCfg := sdk.Config{
 		SocketPath:      cfg.SocketPath,
 		KernelImagePath: cfg.KernelPath,
 		KernelArgs:      kernelArgs,
-		Drives: []models.Drive{
-			{
-				DriveID:      sdk.String("rootfs"),
-				PathOnHost:   sdk.String(cfg.RootfsPath),
-				IsRootDevice: sdk.Bool(true),
-				IsReadOnly:   sdk.Bool(false),
-			},
-		},
+		Drives:          drives,
 		MachineCfg: models.MachineConfiguration{
 			VcpuCount:  sdk.Int64(int64(cfg.CPUs)),
 			MemSizeMib: sdk.Int64(int64(cfg.MemoryMB)),

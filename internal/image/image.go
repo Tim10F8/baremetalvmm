@@ -636,6 +636,91 @@ func InjectDNSConfig(rootfsPath string, dnsServers []string) error {
 	return nil
 }
 
+// MountEntry represents a mount point to add to fstab
+type MountEntry struct {
+	Device    string // e.g., /dev/vdb
+	MountPath string // e.g., /mnt/code
+	ReadOnly  bool
+}
+
+// InjectMountFstab adds mount entries to /etc/fstab in a rootfs image
+// This mounts the rootfs, appends fstab entries, and creates mount directories
+func InjectMountFstab(rootfsPath string, mounts []MountEntry) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	// Create a temporary mount point
+	mountPoint, err := os.MkdirTemp("", "vmm-rootfs-*")
+	if err != nil {
+		return fmt.Errorf("failed to create mount point: %w", err)
+	}
+	defer os.RemoveAll(mountPoint)
+
+	// Mount the rootfs image
+	mountCmd := exec.Command("mount", "-o", "loop", rootfsPath, mountPoint)
+	if output, err := mountCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to mount rootfs: %w: %s", err, string(output))
+	}
+
+	// Ensure we unmount even if there's an error
+	defer func() {
+		umountCmd := exec.Command("umount", mountPoint)
+		umountCmd.Run()
+	}()
+
+	// Read existing fstab
+	fstabPath := filepath.Join(mountPoint, "etc", "fstab")
+	existingFstab, err := os.ReadFile(fstabPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read fstab: %w", err)
+	}
+
+	// Remove any existing vmm mount entries (lines containing "# vmm-mount")
+	lines := strings.Split(string(existingFstab), "\n")
+	var cleanedLines []string
+	for _, line := range lines {
+		if !strings.Contains(line, "# vmm-mount") {
+			cleanedLines = append(cleanedLines, line)
+		}
+	}
+	// Remove trailing empty lines
+	for len(cleanedLines) > 0 && cleanedLines[len(cleanedLines)-1] == "" {
+		cleanedLines = cleanedLines[:len(cleanedLines)-1]
+	}
+
+	// Build new fstab content
+	var newFstab strings.Builder
+	newFstab.WriteString(strings.Join(cleanedLines, "\n"))
+	if len(cleanedLines) > 0 {
+		newFstab.WriteString("\n")
+	}
+
+	// Add mount entries
+	for _, mount := range mounts {
+		options := "defaults,nofail"
+		if mount.ReadOnly {
+			options = "defaults,nofail,ro"
+		}
+		// Add fstab entry with vmm-mount marker
+		newFstab.WriteString(fmt.Sprintf("%s %s ext4 %s 0 2 # vmm-mount\n",
+			mount.Device, mount.MountPath, options))
+
+		// Create mount directory
+		mountDir := filepath.Join(mountPoint, mount.MountPath)
+		if err := os.MkdirAll(mountDir, 0755); err != nil {
+			return fmt.Errorf("failed to create mount directory %s: %w", mount.MountPath, err)
+		}
+	}
+
+	// Write updated fstab
+	if err := os.WriteFile(fstabPath, []byte(newFstab.String()), 0644); err != nil {
+		return fmt.Errorf("failed to write fstab: %w", err)
+	}
+
+	return nil
+}
+
 // InjectSSHKey injects an SSH public key into a rootfs image
 // This mounts the ext4 image and writes the key to /root/.ssh/authorized_keys
 func InjectSSHKey(rootfsPath, sshPublicKey string) error {

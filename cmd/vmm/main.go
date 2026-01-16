@@ -12,6 +12,7 @@ import (
 	"github.com/raesene/baremetalvmm/internal/config"
 	"github.com/raesene/baremetalvmm/internal/firecracker"
 	"github.com/raesene/baremetalvmm/internal/image"
+	"github.com/raesene/baremetalvmm/internal/mount"
 	"github.com/raesene/baremetalvmm/internal/network"
 	"github.com/raesene/baremetalvmm/internal/vm"
 	"github.com/spf13/cobra"
@@ -43,6 +44,7 @@ func main() {
 		configCmd(),
 		imageCmd(),
 		portForwardCmd(),
+		mountCmd(),
 		autostartCmd(),
 		autostopCmd(),
 	)
@@ -59,6 +61,7 @@ func createCmd() *cobra.Command {
 	var sshKeyPath string
 	var dnsServers []string
 	var imageName string
+	var mounts []string
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
@@ -87,6 +90,16 @@ func createCmd() *cobra.Command {
 				}
 			}
 
+			// Parse mount specifications
+			var vmMounts []vm.Mount
+			for _, mountSpec := range mounts {
+				parsedMount, err := mount.ParseMountSpec(mountSpec)
+				if err != nil {
+					return fmt.Errorf("invalid mount specification: %w", err)
+				}
+				vmMounts = append(vmMounts, *parsedMount)
+			}
+
 			// Create new VM
 			newVM := vm.NewVM(name)
 			newVM.CPUs = cpus
@@ -96,6 +109,7 @@ func createCmd() *cobra.Command {
 			newVM.MacAddress = newVM.GenerateMacAddress()
 			newVM.TapDevice = network.GenerateTapName(newVM.ID)
 			newVM.DNSServers = dnsServers
+			newVM.Mounts = vmMounts
 
 			// Set paths
 			newVM.SocketPath = fmt.Sprintf("%s/%s.sock", paths.Sockets, name)
@@ -126,6 +140,16 @@ func createCmd() *cobra.Command {
 			if len(newVM.DNSServers) > 0 {
 				fmt.Printf("  DNS servers: %v\n", newVM.DNSServers)
 			}
+			if len(newVM.Mounts) > 0 {
+				fmt.Printf("  Mounts:\n")
+				for _, m := range newVM.Mounts {
+					mode := "rw"
+					if m.ReadOnly {
+						mode = "ro"
+					}
+					fmt.Printf("    - %s -> /mnt/%s (%s)\n", m.HostPath, m.GuestTag, mode)
+				}
+			}
 			return nil
 		},
 	}
@@ -136,6 +160,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file for root access")
 	cmd.Flags().StringSliceVar(&dnsServers, "dns", nil, "Custom DNS servers (can be specified multiple times)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use (from 'vmm image import')")
+	cmd.Flags().StringArrayVar(&mounts, "mount", nil, "Mount host directory in VM (format: /host/path:tag[:ro|rw])")
 
 	return cmd
 }
@@ -186,6 +211,14 @@ func deleteCmd() *cobra.Command {
 			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 			if err := imgMgr.DeleteVMRootfs(name, paths.VMs); err != nil {
 				fmt.Printf("Warning: failed to delete VM rootfs: %v\n", err)
+			}
+
+			// Delete mount images
+			if len(existingVM.Mounts) > 0 {
+				mountMgr := mount.NewManager(paths.Mounts)
+				if err := mountMgr.DeleteAllMountImages(name, existingVM.Mounts); err != nil {
+					fmt.Printf("Warning: failed to delete mount images: %v\n", err)
+				}
 			}
 
 			// Delete socket file
@@ -308,6 +341,48 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("failed to inject DNS config: %w", err)
 			}
 
+			// Create mount images and configure fstab
+			var mountDrives []firecracker.MountDrive
+			if len(existingVM.Mounts) > 0 {
+				fmt.Println("Creating mount images...")
+				mountMgr := mount.NewManager(paths.Mounts)
+
+				// Create mount images and collect drive configs
+				var mountEntries []image.MountEntry
+				for i := range existingVM.Mounts {
+					m := &existingVM.Mounts[i]
+					if err := mountMgr.CreateMountImage(m, name); err != nil {
+						return fmt.Errorf("failed to create mount image for '%s': %w", m.GuestTag, err)
+					}
+
+					// Device names: vdb, vdc, vdd, etc. (vda is rootfs)
+					deviceLetter := string(rune('b' + i))
+					device := fmt.Sprintf("/dev/vd%s", deviceLetter)
+					mountPath := fmt.Sprintf("/mnt/%s", m.GuestTag)
+
+					mountEntries = append(mountEntries, image.MountEntry{
+						Device:    device,
+						MountPath: mountPath,
+						ReadOnly:  m.ReadOnly,
+					})
+
+					mountDrives = append(mountDrives, firecracker.MountDrive{
+						ImagePath: m.ImagePath,
+						Tag:       m.GuestTag,
+						ReadOnly:  m.ReadOnly,
+					})
+				}
+
+				// Inject fstab entries for mounts
+				fmt.Println("Configuring mount points in guest...")
+				if err := image.InjectMountFstab(existingVM.RootfsPath, mountEntries); err != nil {
+					return fmt.Errorf("failed to inject mount fstab: %w", err)
+				}
+
+				// Save updated mount image paths
+				existingVM.Save(paths.VMs)
+			}
+
 			// Setup networking
 			netMgr := network.NewManager(cfg.BridgeName, cfg.Subnet, cfg.Gateway, cfg.HostInterface)
 
@@ -345,16 +420,17 @@ func startCmd() *cobra.Command {
 			// Start Firecracker
 			ctx := context.Background()
 			vmCfg := &firecracker.VMConfig{
-				SocketPath: existingVM.SocketPath,
-				KernelPath: existingVM.KernelPath,
-				RootfsPath: existingVM.RootfsPath,
-				CPUs:       existingVM.CPUs,
-				MemoryMB:   existingVM.MemoryMB,
-				TapDevice:  existingVM.TapDevice,
-				MacAddress: existingVM.MacAddress,
-				LogPath:    fmt.Sprintf("%s/%s.log", paths.Logs, name),
-				IPAddress:  existingVM.IPAddress,
-				Gateway:    cfg.Gateway,
+				SocketPath:  existingVM.SocketPath,
+				KernelPath:  existingVM.KernelPath,
+				RootfsPath:  existingVM.RootfsPath,
+				CPUs:        existingVM.CPUs,
+				MemoryMB:    existingVM.MemoryMB,
+				TapDevice:   existingVM.TapDevice,
+				MacAddress:  existingVM.MacAddress,
+				LogPath:     fmt.Sprintf("%s/%s.log", paths.Logs, name),
+				IPAddress:   existingVM.IPAddress,
+				Gateway:     cfg.Gateway,
+				MountDrives: mountDrives,
 			}
 
 			machine, err := fcClient.StartVM(ctx, vmCfg)
@@ -737,6 +813,109 @@ func portForwardCmd() *cobra.Command {
 	return cmd
 }
 
+func mountCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mount",
+		Short: "Manage VM directory mounts",
+	}
+
+	syncCmd := &cobra.Command{
+		Use:   "sync <vm-name> <tag>",
+		Short: "Sync a mount image from host directory",
+		Long: `Refresh a mount image with the current contents of the host directory.
+
+This command updates the ext4 image used for the mount with the latest
+files from the host directory. The VM should be stopped when syncing.
+
+Example:
+  vmm mount sync myvm code`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			vmName := args[0]
+			tag := args[1]
+			paths := cfg.GetPaths()
+
+			// Load VM
+			existingVM, err := vm.Load(paths.VMs, vmName)
+			if err != nil {
+				return fmt.Errorf("VM '%s' not found", vmName)
+			}
+
+			// Check if VM is running
+			fcClient := firecracker.NewClient()
+			fcClient.UpdateVMState(existingVM)
+			if existingVM.State == vm.StateRunning {
+				return fmt.Errorf("VM '%s' is running. Stop it before syncing mounts", vmName)
+			}
+
+			// Find the mount with the given tag
+			var targetMount *vm.Mount
+			for i := range existingVM.Mounts {
+				if existingVM.Mounts[i].GuestTag == tag {
+					targetMount = &existingVM.Mounts[i]
+					break
+				}
+			}
+
+			if targetMount == nil {
+				return fmt.Errorf("mount '%s' not found in VM '%s'", tag, vmName)
+			}
+
+			// Sync the mount
+			fmt.Printf("Syncing mount '%s' for VM '%s'...\n", tag, vmName)
+			mountMgr := mount.NewManager(paths.Mounts)
+			if err := mountMgr.SyncMountImage(targetMount, vmName); err != nil {
+				return fmt.Errorf("failed to sync mount: %w", err)
+			}
+
+			// Save updated mount image path
+			existingVM.Save(paths.VMs)
+
+			fmt.Printf("Mount '%s' synced successfully\n", tag)
+			return nil
+		},
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list <vm-name>",
+		Short: "List mounts for a VM",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			vmName := args[0]
+			paths := cfg.GetPaths()
+
+			// Load VM
+			existingVM, err := vm.Load(paths.VMs, vmName)
+			if err != nil {
+				return fmt.Errorf("VM '%s' not found", vmName)
+			}
+
+			if len(existingVM.Mounts) == 0 {
+				fmt.Printf("VM '%s' has no mounts configured\n", vmName)
+				return nil
+			}
+
+			fmt.Printf("Mounts for VM '%s':\n", vmName)
+			for i, m := range existingVM.Mounts {
+				mode := "rw"
+				if m.ReadOnly {
+					mode = "ro"
+				}
+				deviceLetter := string(rune('b' + i))
+				fmt.Printf("  %s: %s -> /mnt/%s (%s) [/dev/vd%s]\n",
+					m.GuestTag, m.HostPath, m.GuestTag, mode, deviceLetter)
+				if m.ImagePath != "" {
+					fmt.Printf("       Image: %s\n", m.ImagePath)
+				}
+			}
+			return nil
+		},
+	}
+
+	cmd.AddCommand(syncCmd, listCmd)
+	return cmd
+}
+
 func autostartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "autostart",
@@ -802,6 +981,39 @@ func autostartCmd() *cobra.Command {
 					fmt.Printf("  Warning: failed to inject DNS config: %v\n", err)
 				}
 
+				// Create mount images and configure fstab
+				var mountDrives []firecracker.MountDrive
+				if len(v.Mounts) > 0 {
+					mountMgr := mount.NewManager(paths.Mounts)
+					var mountEntries []image.MountEntry
+					for j := range v.Mounts {
+						m := &v.Mounts[j]
+						if err := mountMgr.CreateMountImage(m, v.Name); err != nil {
+							fmt.Printf("  Warning: failed to create mount image for '%s': %v\n", m.GuestTag, err)
+							continue
+						}
+						deviceLetter := string(rune('b' + j))
+						device := fmt.Sprintf("/dev/vd%s", deviceLetter)
+						mountPath := fmt.Sprintf("/mnt/%s", m.GuestTag)
+						mountEntries = append(mountEntries, image.MountEntry{
+							Device:    device,
+							MountPath: mountPath,
+							ReadOnly:  m.ReadOnly,
+						})
+						mountDrives = append(mountDrives, firecracker.MountDrive{
+							ImagePath: m.ImagePath,
+							Tag:       m.GuestTag,
+							ReadOnly:  m.ReadOnly,
+						})
+					}
+					if len(mountEntries) > 0 {
+						if err := image.InjectMountFstab(v.RootfsPath, mountEntries); err != nil {
+							fmt.Printf("  Warning: failed to inject mount fstab: %v\n", err)
+						}
+					}
+					v.Save(paths.VMs)
+				}
+
 				// Create TAP if needed
 				if !netMgr.TapExists(v.TapDevice) {
 					if err := netMgr.CreateTap(v.TapDevice); err != nil {
@@ -817,16 +1029,17 @@ func autostartCmd() *cobra.Command {
 				// Start VM
 				ctx := context.Background()
 				vmCfg := &firecracker.VMConfig{
-					SocketPath: v.SocketPath,
-					KernelPath: v.KernelPath,
-					RootfsPath: v.RootfsPath,
-					CPUs:       v.CPUs,
-					MemoryMB:   v.MemoryMB,
-					TapDevice:  v.TapDevice,
-					MacAddress: v.MacAddress,
-					LogPath:    fmt.Sprintf("%s/%s.log", paths.Logs, v.Name),
-					IPAddress:  v.IPAddress,
-					Gateway:    cfg.Gateway,
+					SocketPath:  v.SocketPath,
+					KernelPath:  v.KernelPath,
+					RootfsPath:  v.RootfsPath,
+					CPUs:        v.CPUs,
+					MemoryMB:    v.MemoryMB,
+					TapDevice:   v.TapDevice,
+					MacAddress:  v.MacAddress,
+					LogPath:     fmt.Sprintf("%s/%s.log", paths.Logs, v.Name),
+					IPAddress:   v.IPAddress,
+					Gateway:     cfg.Gateway,
+					MountDrives: mountDrives,
 				}
 
 				machine, err := fcClient.StartVM(ctx, vmCfg)

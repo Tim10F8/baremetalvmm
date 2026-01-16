@@ -69,16 +69,24 @@ baremetalvmm/
 - Creates per-VM rootfs copies for persistence
 - Stored in `/var/lib/vmm/images/`
 
+### 6. Mount Management (`internal/mount/`)
+- Creates ext4 images from host directories for VM mounts
+- Mount images stored in `/var/lib/vmm/mounts/`
+- Supports read-only and read-write mounts
+- Auto-mounts in guest via fstab injection
+
 ## CLI Commands
 
 ```
-vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME]
+vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--mount PATH:TAG[:ro|rw]]
 vmm start <name>
 vmm stop <name>
 vmm delete <name> [-f]
 vmm list [-a]
 vmm ssh <name> [-u user]
 vmm port-forward <name> <host>:<guest>
+vmm mount list <name>
+vmm mount sync <name> <tag>
 vmm image list
 vmm image pull
 vmm image import <docker-image> --name <name> [--size MB]
@@ -96,6 +104,7 @@ vmm autostop    # Hidden, used by systemd
 - `--ssh-key` - Path to SSH public key file for root access
 - `--dns` - Custom DNS server (can be repeated for multiple servers)
 - `--image` - Name of custom rootfs image (from `vmm image import`)
+- `--mount` - Mount host directory in VM (format: `/host/path:tag[:ro|rw]`, can be repeated)
 
 ## Common Development Tasks
 
@@ -281,6 +290,52 @@ vmm image list
 # Delete an imported image
 sudo vmm image delete ubuntu-base
 ```
+
+### Host Directory Mounting (`internal/mount/mount.go`)
+**Feature**: Mount host directories inside VMs as block devices.
+**Implementation**:
+- Added `Mount` struct to VM with `HostPath`, `GuestTag`, `ReadOnly`, `ImagePath` fields
+- Added `--mount` flag to `vmm create` command (can be repeated for multiple mounts)
+- `CreateMountImage()` creates ext4 image from host directory contents
+- `SyncMountImage()` refreshes mount image with current host directory contents
+- Mount images attached as additional block devices (/dev/vdb, /dev/vdc, etc.)
+- Auto-mounted in guest via `/etc/fstab` injection
+- Added `vmm mount list` and `vmm mount sync` commands
+
+**How it works**:
+1. At `vmm create`, mount specifications are parsed and stored in VM config
+2. At `vmm start`, ext4 images are created from each host directory
+3. Fstab entries are injected into the VM rootfs for auto-mounting
+4. Mount images are attached as additional Firecracker block devices
+5. Guest boots with mounts available at `/mnt/<tag>`
+
+**Requirements**:
+- Host directories must exist at creation time
+- Mount tags must contain only alphanumeric characters, dashes, and underscores
+- Requires root privileges (for mounting images and VM operations)
+
+**Usage**:
+```bash
+# Create VM with a single mount (read-write by default)
+sudo vmm create myvm --mount /home/user/code:code --ssh-key ~/.ssh/id_ed25519.pub
+
+# Create VM with multiple mounts
+sudo vmm create myvm --mount /home/user/code:code:ro --mount /home/user/output:output:rw
+
+# List mounts for a VM
+vmm mount list myvm
+
+# Sync mount contents from host (VM must be stopped)
+sudo vmm mount sync myvm code
+
+# Start VM - mounts will be available at /mnt/code, /mnt/output, etc.
+sudo vmm start myvm
+```
+
+**Guest behavior**:
+- Mounts appear as `/dev/vdb`, `/dev/vdc`, etc. (vda is the rootfs)
+- Auto-mounted to `/mnt/<tag>` via fstab at boot
+- Read-only mounts are enforced at both fstab level and Firecracker block device level
 
 ## Future Improvements (Not Yet Implemented)
 

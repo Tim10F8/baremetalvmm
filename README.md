@@ -9,6 +9,7 @@ A lightweight CLI tool to manage Firecracker microVMs for development environmen
 - **Bridge Networking** - Full network connectivity with NAT and port forwarding
 - **Outbound Internet** - VMs have full internet access via NAT with configurable DNS
 - **Persistent Storage** - VM disks survive restarts with configurable sizes
+- **Host Directory Mounting** - Mount host directories inside VMs as block devices
 - **SSH Key Injection** - Automatic SSH key setup for passwordless access
 - **Auto-Start** - VMs automatically restart after host reboot
 - **Simple CLI** - Intuitive commands for VM lifecycle management
@@ -94,6 +95,7 @@ Flags:
   --ssh-key string   Path to SSH public key file for root access
   --dns string       Custom DNS servers (can be specified multiple times)
   --image string     Name of rootfs image to use (from 'vmm image import')
+  --mount string     Mount host directory in VM (format: /host/path:tag[:ro|rw], can be repeated)
 ```
 
 Example with all options:
@@ -101,7 +103,8 @@ Example with all options:
 sudo vmm create myvm --cpus 2 --memory 2048 --disk 10000 \
   --ssh-key ~/.ssh/id_ed25519.pub \
   --dns 9.9.9.9 --dns 1.1.1.1 \
-  --image ubuntu-base
+  --image ubuntu-base \
+  --mount /home/user/code:code:ro
 ```
 
 ### Access
@@ -125,6 +128,22 @@ Example:
 ```bash
 # Forward host port 8080 to VM port 80 Needs sudo for iptables rights
 sudo vmm port-forward myvm 8080:80
+```
+
+### Mounts
+
+| Command | Description |
+|---------|-------------|
+| `vmm mount list <name>` | List mounts configured for a VM |
+| `vmm mount sync <name> <tag>` | Sync mount image from host directory (VM must be stopped) |
+
+Example:
+```bash
+# List mounts for a VM
+vmm mount list myvm
+
+# Sync mount contents after making changes on host
+sudo vmm mount sync myvm code
 ```
 
 ### Images
@@ -203,6 +222,7 @@ IP addresses are allocated sequentially from 172.16.0.2 when a VM is started (no
 ├── images/
 │   ├── kernels/      # Linux kernel images
 │   └── rootfs/       # Root filesystem images
+├── mounts/           # Mount images (ext4 images from host directories)
 ├── sockets/          # Firecracker API sockets
 ├── logs/             # VM logs
 └── state/            # Runtime state
@@ -254,6 +274,86 @@ sudo vmm create myvm --dns 10.0.0.53 --dns 10.0.0.54
 ```
 
 DNS configuration is written to `/etc/resolv.conf` in the VM's rootfs each time the VM starts.
+
+## Host Directory Mounting
+
+VMM can mount host directories inside VMs, making them accessible as block devices. This is useful for sharing code, data, or configuration between the host and VMs.
+
+### How It Works
+
+Since Firecracker doesn't support virtio-fs, VMM uses a block device approach:
+
+1. At VM start, an ext4 image is created from each host directory
+2. The image is attached as an additional block device (`/dev/vdb`, `/dev/vdc`, etc.)
+3. Fstab entries are injected into the VM rootfs for auto-mounting
+4. The VM boots with mounts available at `/mnt/<tag>`
+
+### Creating a VM with Mounts
+
+```bash
+# Single mount (read-write by default)
+sudo vmm create myvm --mount /home/user/code:code --ssh-key ~/.ssh/id_ed25519.pub
+
+# Multiple mounts with different modes
+sudo vmm create myvm \
+  --mount /home/user/code:code:ro \
+  --mount /home/user/output:output:rw \
+  --ssh-key ~/.ssh/id_ed25519.pub
+
+# Start the VM
+sudo vmm start myvm
+```
+
+The mount format is: `/host/path:tag[:ro|rw]`
+- `/host/path` - Absolute path to the directory on the host
+- `tag` - Name for the mount (alphanumeric, dashes, underscores only)
+- `ro|rw` - Optional mode, defaults to `rw` (read-write)
+
+### Accessing Mounts in the VM
+
+After the VM starts, mounts are available at `/mnt/<tag>`:
+
+```bash
+# SSH into the VM
+vmm ssh myvm
+
+# Inside the VM:
+ls /mnt/code      # Your mounted directory
+cat /mnt/code/README.md
+```
+
+### Syncing Mount Contents
+
+If you make changes to the host directory while the VM is stopped, the changes will be included when you start the VM (the mount image is recreated from the host directory at each start).
+
+To explicitly sync a mount image:
+
+```bash
+# Stop the VM first
+sudo vmm stop myvm
+
+# Sync the mount
+sudo vmm mount sync myvm code
+
+# Start the VM
+sudo vmm start myvm
+```
+
+### Listing Mounts
+
+```bash
+vmm mount list myvm
+# Output:
+# Mounts for VM 'myvm':
+#   code: /home/user/code -> /mnt/code (ro) [/dev/vdb]
+#   output: /home/user/output -> /mnt/output (rw) [/dev/vdc]
+```
+
+### Limitations
+
+- Mount images are snapshots - changes inside the VM are not reflected back to the host
+- The VM must be stopped to sync mount contents from the host
+- Mount tags must be unique within a VM
 
 ## Custom Docker Images
 
@@ -400,7 +500,8 @@ go test ./...
 │   ├── vm/                   # VM struct and persistence
 │   ├── firecracker/          # Firecracker SDK wrapper
 │   ├── network/              # TAP/bridge networking
-│   └── image/                # Kernel/rootfs management
+│   ├── image/                # Kernel/rootfs management
+│   └── mount/                # Host directory mount management
 ├── scripts/
 │   ├── install.sh            # Installation script
 │   └── vmm.service           # Systemd service
