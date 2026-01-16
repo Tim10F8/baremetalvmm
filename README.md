@@ -7,7 +7,9 @@ A lightweight CLI tool to manage Firecracker microVMs for development environmen
 - **Fast Boot Times** - VMs start in under 1 second using Firecracker
 - **Low Overhead** - Each VM uses <5MB memory overhead
 - **Bridge Networking** - Full network connectivity with NAT and port forwarding
-- **Persistent Storage** - VM disks survive restarts
+- **Outbound Internet** - VMs have full internet access via NAT with configurable DNS
+- **Persistent Storage** - VM disks survive restarts with configurable sizes
+- **SSH Key Injection** - Automatic SSH key setup for passwordless access
 - **Auto-Start** - VMs automatically restart after host reboot
 - **Simple CLI** - Intuitive commands for VM lifecycle management
 
@@ -90,6 +92,14 @@ Flags:
   --memory int       Memory in MB (default 512)
   --disk int         Disk size in MB (default 1024)
   --ssh-key string   Path to SSH public key file for root access
+  --dns string       Custom DNS servers (can be specified multiple times)
+```
+
+Example with all options:
+```bash
+sudo vmm create myvm --cpus 2 --memory 2048 --disk 10000 \
+  --ssh-key ~/.ssh/id_ed25519.pub \
+  --dns 9.9.9.9 --dns 1.1.1.1
 ```
 
 ### Access
@@ -222,6 +232,25 @@ This allows passwordless SSH access as root using your existing SSH key pair.
 
 **Note**: SSH key injection requires root privileges (for mounting the rootfs image).
 
+## DNS Configuration
+
+VMM automatically configures DNS in VMs at startup. By default, VMs use public DNS servers:
+- 8.8.8.8 (Google)
+- 8.8.4.4 (Google)
+- 1.1.1.1 (Cloudflare)
+
+To use custom DNS servers, specify them when creating the VM:
+
+```bash
+# Use Quad9 and Cloudflare DNS
+sudo vmm create myvm --dns 9.9.9.9 --dns 1.0.0.1
+
+# Use corporate DNS
+sudo vmm create myvm --dns 10.0.0.53 --dns 10.0.0.54
+```
+
+DNS configuration is written to `/etc/resolv.conf` in the VM's rootfs each time the VM starts.
+
 ## Troubleshooting
 
 ### KVM not available
@@ -259,6 +288,22 @@ Test connectivity from host:
 ```bash
 ping 172.16.0.2
 ```
+
+### VM can't reach the internet
+
+Verify the `host_interface` in your config matches your actual network interface:
+```bash
+# Find your network interface
+ip route | grep default
+# Example output: default via 192.168.1.1 dev wlp3s0
+
+# Check your config
+cat ~/.config/vmm/config.json
+
+# Update host_interface if needed (e.g., change "eth0" to "wlp3s0")
+```
+
+After updating the config, restart your VM for the NAT rules to be recreated with the correct interface.
 
 ### VM won't start
 

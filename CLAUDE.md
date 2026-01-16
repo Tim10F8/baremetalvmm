@@ -44,6 +44,7 @@ baremetalvmm/
 - Default subnet: `172.16.0.0/16`
 - Gateway: `172.16.0.1`
 - Config file: `~/.config/vmm/config.json`
+- **Important**: `host_interface` must match actual network interface (e.g., `eth0`, `wlp3s0`, `enp0s3`)
 
 ### 2. VM Management (`internal/vm/`)
 - VM states: `created`, `starting`, `running`, `stopping`, `stopped`, `error`
@@ -71,7 +72,7 @@ baremetalvmm/
 ## CLI Commands
 
 ```
-vmm create <name> [--cpus N] [--memory MB] [--disk MB]
+vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER]
 vmm start <name>
 vmm stop <name>
 vmm delete <name> [-f]
@@ -85,6 +86,13 @@ vmm config init
 vmm autostart   # Hidden, used by systemd
 vmm autostop    # Hidden, used by systemd
 ```
+
+### Create flags
+- `--cpus` - Number of vCPUs (default: 1)
+- `--memory` - Memory in MB (default: 512)
+- `--disk` - Disk size in MB (default: 1024) - rootfs is resized to this size
+- `--ssh-key` - Path to SSH public key file for root access
+- `--dns` - Custom DNS server (can be repeated for multiple servers)
 
 ## Common Development Tasks
 
@@ -166,7 +174,7 @@ Key Go packages:
 
 ## Features Added (January 2026)
 
-### SSH Key Injection (`internal/image/image.go:193-243`)
+### SSH Key Injection (`internal/image/image.go`)
 **Feature**: Inject SSH public keys into VM rootfs for passwordless access.
 **Implementation**:
 - Added `SSHPublicKey` field to VM struct
@@ -179,6 +187,54 @@ Key Go packages:
 vmm create myvm --ssh-key ~/.ssh/id_ed25519.pub
 vmm start myvm
 vmm ssh myvm
+```
+
+### Disk Resize (`internal/image/image.go`)
+**Feature**: VM rootfs is resized to the requested `--disk` size.
+**Implementation**:
+- `CreateVMRootfs()` now accepts disk size parameter
+- Uses `truncate` to expand the file to requested size
+- Uses `resize2fs` to expand the ext4 filesystem
+- Resize happens when VM is first started (rootfs created)
+
+**Usage**:
+```bash
+vmm create myvm --disk 20000  # 20GB disk
+```
+
+### Sudo-aware SSH (`cmd/vmm/main.go`)
+**Feature**: `vmm ssh` works correctly when run with sudo.
+**Problem**: Running `sudo vmm ssh` looked for SSH keys in `/root/.ssh/` instead of the user's home.
+**Fix**: Detect `SUDO_USER` environment variable and use original user's SSH keys.
+
+### Sudo-aware Config (`internal/config/config.go`)
+**Feature**: Config loading works correctly when running with sudo.
+**Problem**: Running `sudo vmm start` loaded config from `/root/.config/` instead of user's config.
+**Fix**: `ConfigPath()` detects `SUDO_USER` and uses original user's home directory.
+
+### Outbound Network Connectivity (`internal/network/network.go`)
+**Feature**: VMs have full outbound internet access via NAT.
+**Implementation**:
+- `EnsureBridge()` always ensures NAT rules are in place (not just on bridge creation)
+- iptables MASQUERADE rule for outbound traffic
+- FORWARD rules for bridge-to-host traffic
+- Uses `host_interface` from config (must match actual network interface)
+
+### DNS Configuration (`internal/image/image.go`)
+**Feature**: Automatic DNS configuration with customizable servers.
+**Implementation**:
+- Added `DNSServers` field to VM struct
+- Added `--dns` flag to `vmm create` (can be repeated)
+- `InjectDNSConfig()` writes `/etc/resolv.conf` in VM rootfs
+- Default DNS: 8.8.8.8, 8.8.4.4, 1.1.1.1
+
+**Usage**:
+```bash
+# Default DNS (Google, Cloudflare)
+vmm create myvm
+
+# Custom DNS
+vmm create myvm --dns 9.9.9.9 --dns 1.0.0.1
 ```
 
 ## Future Improvements (Not Yet Implemented)
@@ -227,4 +283,21 @@ ls -la /var/lib/vmm/sockets/
 ### Test VM network connectivity
 ```bash
 ping 172.16.0.2  # First VM's IP
+```
+
+### Verify host interface configuration
+```bash
+# Check which interface has internet access
+ip route | grep default
+# Example output: default via 192.168.1.1 dev wlp3s0
+
+# Update config if needed
+cat ~/.config/vmm/config.json
+# Ensure "host_interface" matches the interface name (e.g., "wlp3s0")
+```
+
+### Test outbound connectivity from VM
+```bash
+vmm ssh myvm -- 'getent hosts google.com'  # Test DNS
+vmm ssh myvm -- 'curl -s http://example.com'  # Test HTTP
 ```
