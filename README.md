@@ -72,11 +72,13 @@ sudo vmm delete myvm
 
 | Command | Description |
 |---------|-------------|
-| `vmm create <name>` | Create a new VM |
-| `vmm start <name>` | Start a VM (requires root) |
+| `vmm create <name>` | Create a new VM configuration (VM is not running yet) |
+| `vmm start <name>` | Start a VM - assigns IP address, sets up networking, boots VM (requires root) |
 | `vmm stop <name>` | Stop a running VM (requires root) |
 | `vmm delete <name>` | Delete a VM and its resources |
 | `vmm list` | List all VMs |
+
+**Note**: VMs must be explicitly started after creation. IP addresses are assigned at start time, not at creation time.
 
 ### Create Options
 
@@ -174,7 +176,7 @@ Host Network (eth0)
   VM1 VM2 VM3     ← 172.16.0.2, 172.16.0.3, ...
 ```
 
-IP addresses are configured via kernel command line parameters, so VMs get network connectivity immediately on boot.
+IP addresses are allocated sequentially from 172.16.0.2 when a VM is started (not when created). The IP is configured via kernel command line parameters, so VMs get network connectivity immediately on boot.
 
 ## Directory Structure
 
