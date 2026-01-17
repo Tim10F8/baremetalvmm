@@ -63,7 +63,7 @@ Once the VM is created, we can start it up
 sudo vmm start myvm
 ```
 
-Then once it's started we should be able to SSH in to it. That can be done by name using the `vmm` command as shown below, or you can just use standard `ssh` with a username of `root` and the IP address of the VM
+Then once it's started we should be able to SSH in to it. That can be done by name using the `vmm` command as shown below, or you can just use standard `ssh` with a username of `root` and the IP address of the VM. By default it's only reachable from the local machine, but you can use the `port-forward` command to expose the VM to the wider world (using an iptables command under the covers)
 
 ```bash
 vmm ssh myvm
