@@ -1,22 +1,16 @@
 # VMM - Bare Metal MicroVM Manager
 
-A lightweight CLI tool to manage Firecracker microVMs for development environments on Ubuntu 24.04.
+**WARNING** This is a vibe-coded piece of software allow for creation of microVMs conveniently. It's still heavily in development, I do not recommend anyone apart from me use it :) !
 
-## Features
+The goal of the project is to allow for small development VMs to be spun up based on [firecracker](https://github.com/firecracker-microvm/firecracker), so they're lightweight. It can build VM images from a Docker image, allowing for custom VMs.
 
-- **Fast Boot Times** - VMs start in under 1 second using Firecracker
-- **Low Overhead** - Each VM uses <5MB memory overhead
-- **Bridge Networking** - Full network connectivity with NAT and port forwarding
-- **Outbound Internet** - VMs have full internet access via NAT with configurable DNS
-- **Persistent Storage** - VM disks survive restarts with configurable sizes
-- **Host Directory Mounting** - Mount host directories inside VMs as block devices
-- **SSH Key Injection** - Automatic SSH key setup for passwordless access
-- **Auto-Start** - VMs automatically restart after host reboot
-- **Simple CLI** - Intuitive commands for VM lifecycle management
+The goal of the project is to be useful in cases where you want something like Docker, but want some more isolation that Docker provides, or you want to do lower level tasks in the VM that don't suit Docker well. N.B we're not there yet!
+
+Pretty much all of the coding has been done with [Claude code](https://github.com/anthropics/claude-code) using Opus 4.5.
 
 ## Requirements
 
-- Ubuntu 24.04 (or compatible Linux distribution)
+- Ubuntu 24.04 (or compatible Linux distribution). All testing has been done on Ubuntu 24.04, so it's likely only to work with that distro.
 - KVM support (`/dev/kvm` must be accessible)
 - Root access (for networking setup)
 - Go 1.21+ (only if building from source)
