@@ -179,6 +179,103 @@ create_kernel_config() {
     ./scripts/config --enable CONFIG_NET
     ./scripts/config --enable CONFIG_INET
 
+    # Overlay filesystem (required for Docker)
+    ./scripts/config --enable CONFIG_OVERLAY_FS
+
+    # Netfilter/iptables (required for Docker networking)
+    ./scripts/config --enable CONFIG_NETFILTER
+    ./scripts/config --enable CONFIG_NETFILTER_ADVANCED
+    ./scripts/config --enable CONFIG_NETFILTER_XTABLES
+    ./scripts/config --enable CONFIG_NETFILTER_NETLINK
+    ./scripts/config --enable CONFIG_NETFILTER_NETLINK_QUEUE
+    ./scripts/config --enable CONFIG_NETFILTER_NETLINK_LOG
+
+    # nf_tables (used by iptables-nft on modern systems)
+    ./scripts/config --enable CONFIG_NF_TABLES
+    ./scripts/config --enable CONFIG_NF_TABLES_INET
+    ./scripts/config --enable CONFIG_NF_TABLES_NETDEV
+    ./scripts/config --enable CONFIG_NFT_NUMGEN
+    ./scripts/config --enable CONFIG_NFT_CT
+    ./scripts/config --enable CONFIG_NFT_COUNTER
+    ./scripts/config --enable CONFIG_NFT_CONNLIMIT
+    ./scripts/config --enable CONFIG_NFT_LOG
+    ./scripts/config --enable CONFIG_NFT_LIMIT
+    ./scripts/config --enable CONFIG_NFT_MASQ
+    ./scripts/config --enable CONFIG_NFT_REDIR
+    ./scripts/config --enable CONFIG_NFT_NAT
+    ./scripts/config --enable CONFIG_NFT_REJECT
+    ./scripts/config --enable CONFIG_NFT_COMPAT
+    ./scripts/config --enable CONFIG_NFT_HASH
+    ./scripts/config --enable CONFIG_NFT_FIB
+    ./scripts/config --enable CONFIG_NFT_FIB_INET
+
+    # Connection tracking (required for NAT/masquerade)
+    ./scripts/config --enable CONFIG_NF_CONNTRACK
+    ./scripts/config --enable CONFIG_NF_NAT
+    ./scripts/config --enable CONFIG_NF_NAT_MASQUERADE
+
+    # IPv4 netfilter
+    ./scripts/config --enable CONFIG_NF_TABLES_IPV4
+    ./scripts/config --enable CONFIG_NFT_CHAIN_ROUTE_IPV4
+    ./scripts/config --enable CONFIG_NFT_FIB_IPV4
+    ./scripts/config --enable CONFIG_NF_REJECT_IPV4
+    ./scripts/config --enable CONFIG_IP_NF_IPTABLES
+    ./scripts/config --enable CONFIG_IP_NF_FILTER
+    ./scripts/config --enable CONFIG_IP_NF_TARGET_REJECT
+    ./scripts/config --enable CONFIG_IP_NF_NAT
+    ./scripts/config --enable CONFIG_IP_NF_TARGET_MASQUERADE
+
+    # IPv6 netfilter (Docker also uses IPv6)
+    ./scripts/config --enable CONFIG_NF_TABLES_IPV6
+    ./scripts/config --enable CONFIG_NFT_CHAIN_ROUTE_IPV6
+    ./scripts/config --enable CONFIG_NFT_FIB_IPV6
+    ./scripts/config --enable CONFIG_NF_REJECT_IPV6
+    ./scripts/config --enable CONFIG_IP6_NF_IPTABLES
+    ./scripts/config --enable CONFIG_IP6_NF_FILTER
+    ./scripts/config --enable CONFIG_IP6_NF_TARGET_REJECT
+    ./scripts/config --enable CONFIG_IP6_NF_NAT
+    ./scripts/config --enable CONFIG_IP6_NF_TARGET_MASQUERADE
+
+    # Network device drivers (required for Docker)
+    ./scripts/config --enable CONFIG_BRIDGE
+    ./scripts/config --enable CONFIG_VETH
+    ./scripts/config --enable CONFIG_VLAN_8021Q
+    ./scripts/config --enable CONFIG_MACVLAN
+    ./scripts/config --enable CONFIG_IPVLAN
+    ./scripts/config --enable CONFIG_DUMMY
+
+    # Bridge netfilter (for Docker bridge networks)
+    ./scripts/config --enable CONFIG_NF_TABLES_BRIDGE
+    ./scripts/config --enable CONFIG_BRIDGE_NF_EBTABLES
+    ./scripts/config --enable CONFIG_BRIDGE_EBT_BROUTE
+    ./scripts/config --enable CONFIG_BRIDGE_EBT_T_FILTER
+    ./scripts/config --enable CONFIG_BRIDGE_EBT_T_NAT
+
+    # BPF support (required for Docker device cgroup)
+    ./scripts/config --enable CONFIG_BPF
+    ./scripts/config --enable CONFIG_BPF_SYSCALL
+    ./scripts/config --enable CONFIG_BPF_JIT
+    ./scripts/config --enable CONFIG_BPF_JIT_ALWAYS_ON
+
+    # Cgroups (required for Docker container resource management)
+    ./scripts/config --enable CONFIG_CGROUPS
+    ./scripts/config --enable CONFIG_CGROUP_FREEZER
+    ./scripts/config --enable CONFIG_CGROUP_PIDS
+    ./scripts/config --enable CONFIG_CGROUP_DEVICE
+    ./scripts/config --enable CONFIG_CPUSETS
+    ./scripts/config --enable CONFIG_CGROUP_CPUACCT
+    ./scripts/config --enable CONFIG_MEMCG
+    ./scripts/config --enable CONFIG_CGROUP_SCHED
+    ./scripts/config --enable CONFIG_CGROUP_BPF
+
+    # Namespaces (required for Docker container isolation)
+    ./scripts/config --enable CONFIG_NAMESPACES
+    ./scripts/config --enable CONFIG_UTS_NS
+    ./scripts/config --enable CONFIG_IPC_NS
+    ./scripts/config --enable CONFIG_USER_NS
+    ./scripts/config --enable CONFIG_PID_NS
+    ./scripts/config --enable CONFIG_NET_NS
+
     # Disable modules - we want everything built-in
     ./scripts/config --disable CONFIG_MODULES
 
