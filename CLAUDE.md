@@ -32,6 +32,7 @@ baremetalvmm/
 ├── scripts/
 │   ├── install.sh            # Installation script (binary + Firecracker)
 │   ├── install-service.sh    # Systemd service installation (optional)
+│   ├── build-kernel.sh       # Custom kernel build script
 │   └── vmm.service           # Systemd unit file
 ├── go.mod, go.sum            # Dependencies
 ├── README.md                 # User documentation
@@ -80,7 +81,7 @@ baremetalvmm/
 ## CLI Commands
 
 ```
-vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--mount PATH:TAG[:ro|rw]]
+vmm create <name> [--cpus N] [--memory MB] [--disk MB] [--ssh-key PATH] [--dns SERVER] [--image NAME] [--kernel NAME] [--mount PATH:TAG[:ro|rw]]
 vmm start <name>
 vmm stop <name>
 vmm delete <name> [-f]
@@ -93,6 +94,10 @@ vmm image list
 vmm image pull
 vmm image import <docker-image> --name <name> [--size MB]
 vmm image delete <name>
+vmm kernel list
+vmm kernel import <path> --name <name> [-f]
+vmm kernel delete <name>
+vmm kernel build --version <version> --name <name>
 vmm config show
 vmm config init
 vmm autostart   # Hidden, used by systemd
@@ -106,6 +111,7 @@ vmm autostop    # Hidden, used by systemd
 - `--ssh-key` - Path to SSH public key file for root access
 - `--dns` - Custom DNS server (can be repeated for multiple servers)
 - `--image` - Name of custom rootfs image (from `vmm image import`)
+- `--kernel` - Name of custom kernel (from `vmm kernel import`)
 - `--mount` - Mount host directory in VM (format: `/host/path:tag[:ro|rw]`, can be repeated)
 
 ## Common Development Tasks
@@ -359,6 +365,47 @@ sudo vmm start myvm
 - Used for both VMM binary and Firecracker downloads
 - Provides clear error if neither is available
 
+### Custom Kernel Support (`internal/image/image.go`, `cmd/vmm/main.go`, `scripts/build-kernel.sh`)
+**Feature**: Import and manage custom Linux kernels for VMs.
+**Implementation**:
+- Added `Kernel` field to VM struct (stores custom kernel name)
+- Added `--kernel` flag to `vmm create` command
+- Added `vmm kernel` commands: `list`, `import`, `delete`, `build`
+- `ImportKernel()` validates ELF binary and copies to `/var/lib/vmm/images/kernels/`
+- `GetKernelPath()` returns kernel path, falls back to default if empty
+- `ListKernelsWithInfo()` returns detailed kernel information
+- `validateKernelBinary()` uses `debug/elf` to verify architecture and executable type
+- `build-kernel.sh` script for compiling Firecracker-compatible kernels from source
+
+**Kernel validation**:
+- Checks ELF magic bytes
+- Verifies architecture matches host (x86_64 or aarch64)
+- Verifies it's an executable (ET_EXEC)
+
+**Build script features**:
+- Downloads kernel source from kernel.org
+- Creates Firecracker-compatible kernel configuration
+- Supports versions: 5.10, 6.1, 6.6
+- Includes all required options: virtio, serial console, ext4, networking
+
+**Usage**:
+```bash
+# Import an existing kernel
+sudo vmm kernel import /path/to/vmlinux --name my-kernel
+
+# Build a kernel from source
+sudo vmm kernel build --version 6.1 --name kernel-6.1
+
+# List available kernels
+vmm kernel list
+
+# Create VM with custom kernel
+sudo vmm create myvm --kernel my-kernel --ssh-key ~/.ssh/id_ed25519.pub
+
+# Delete a kernel
+sudo vmm kernel delete my-kernel
+```
+
 ## Future Improvements (Not Yet Implemented)
 
 1. **Cloud-init** - Full cloud-init support for more flexible VM initialization
@@ -367,7 +414,6 @@ sudo vmm start myvm
 4. **Better IP management** - Persistent IP allocation
 5. **Web UI** - Optional browser-based management
 6. **VM snapshots** - Save/restore VM state
-7. **Custom kernels** - Support for user-provided kernel images
 
 ## Code Style
 

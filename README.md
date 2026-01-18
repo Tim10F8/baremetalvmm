@@ -43,7 +43,7 @@ First up (one time only) run the init command
 vmm config init
 ```
 
-Next up we need to pull the default kernel and root image, this is the ones provided by the firecracker project, we can change the rootfs with more commands (changing kernel still to be developed). Again this is one-time should be present for future runs
+Next up we need to pull the default kernel and root image, this is the ones provided by the firecracker project, we can change the rootfs with more commands and also use custom kernels (see Custom Kernels section). Again this is one-time should be present for future runs
 
 ```bash
 sudo vmm image pull
@@ -107,6 +107,7 @@ Flags:
   --ssh-key string   Path to SSH public key file for root access
   --dns string       Custom DNS servers (can be specified multiple times)
   --image string     Name of rootfs image to use (from 'vmm image import')
+  --kernel string    Name of kernel to use (from 'vmm kernel import' or 'vmm kernel build')
   --mount string     Mount host directory in VM (format: /host/path:tag[:ro|rw], can be repeated)
 ```
 
@@ -116,6 +117,7 @@ sudo vmm create myvm --cpus 2 --memory 2048 --disk 10000 \
   --ssh-key ~/.ssh/id_ed25519.pub \
   --dns 9.9.9.9 --dns 1.1.1.1 \
   --image ubuntu-base \
+  --kernel my-kernel \
   --mount /home/user/code:code:ro
 ```
 
@@ -166,6 +168,15 @@ sudo vmm mount sync myvm code
 | `vmm image pull` | Download default images |
 | `vmm image import <docker-image> --name <name>` | Import a Docker image as rootfs |
 | `vmm image delete <name>` | Delete an imported image |
+
+### Kernels
+
+| Command | Description |
+|---------|-------------|
+| `vmm kernel list` | List available kernels |
+| `vmm kernel import <path> --name <name>` | Import a custom kernel binary |
+| `vmm kernel build --version <ver> --name <name>` | Build a kernel from source |
+| `vmm kernel delete <name>` | Delete a custom kernel |
 
 ### Configuration
 
@@ -419,6 +430,95 @@ vmm image list
 sudo vmm image delete ubuntu-base
 ```
 
+## Custom Kernels
+
+VMM supports custom Linux kernels, allowing you to run newer kernel versions or kernels with specific configurations in your VMs.
+
+### Listing Available Kernels
+
+```bash
+vmm kernel list
+# Output:
+# Available kernels:
+#   - kernel-6.1 (68.15 MB)
+#   - vmlinux.bin (default) (20.45 MB)
+```
+
+### Importing a Pre-built Kernel
+
+If you have a pre-built vmlinux binary (uncompressed kernel), you can import it directly:
+
+```bash
+# Import a kernel binary
+sudo vmm kernel import /path/to/vmlinux --name my-kernel
+
+# Force overwrite an existing kernel
+sudo vmm kernel import /path/to/vmlinux --name my-kernel --force
+```
+
+The kernel must be:
+- An uncompressed vmlinux ELF binary (not bzImage or zImage)
+- Built for the same architecture as the host (x86_64 or aarch64)
+- Configured with Firecracker-compatible options (virtio, serial console, etc.)
+
+### Building a Kernel from Source
+
+VMM includes a build script that compiles Firecracker-compatible kernels from source:
+
+```bash
+# Build a 6.1 LTS kernel
+sudo vmm kernel build --version 6.1 --name kernel-6.1
+
+# Supported versions: 5.10, 6.1, 6.6 (all LTS kernels)
+```
+
+#### Build Requirements
+
+The build script requires these packages:
+
+```bash
+sudo apt-get install build-essential flex bison bc libelf-dev libssl-dev wget
+```
+
+#### What the Build Script Does
+
+1. Downloads kernel source from kernel.org
+2. Downloads Firecracker's recommended kernel configuration
+3. Builds an uncompressed vmlinux binary with all drivers built-in
+4. Installs the kernel to `/var/lib/vmm/images/kernels/<name>`
+
+Build time is typically 5-15 minutes depending on your system.
+
+### Using a Custom Kernel
+
+```bash
+# Create a VM with a custom kernel
+sudo vmm create myvm --kernel kernel-6.1 --ssh-key ~/.ssh/id_ed25519.pub
+
+# Start the VM
+sudo vmm start myvm
+
+# Verify the kernel version
+vmm ssh myvm -- uname -r
+# Output: 6.1.119
+```
+
+### Deleting a Kernel
+
+```bash
+# Delete a custom kernel
+sudo vmm kernel delete kernel-6.1
+```
+
+**Note**: You cannot delete the default kernel (`vmlinux.bin`). If VMs are configured to use a kernel you're deleting, they will fail to start until reconfigured.
+
+### When to Use Custom Kernels
+
+- **Newer kernel features**: Run a newer kernel than the default (4.14)
+- **Security patches**: Use the latest LTS kernel with security fixes
+- **Custom configurations**: Build kernels with specific options enabled
+- **Testing**: Test your application against different kernel versions
+
 ## Troubleshooting
 
 ### KVM not available
@@ -520,6 +620,7 @@ go test ./...
 ├── scripts/
 │   ├── install.sh            # Installation script
 │   ├── install-service.sh    # Systemd service installation (optional)
+│   ├── build-kernel.sh       # Custom kernel build script
 │   └── vmm.service           # Systemd service unit file
 └── go.mod                    # Go modules
 ```

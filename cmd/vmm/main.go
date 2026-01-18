@@ -43,6 +43,7 @@ func main() {
 		sshCmd(),
 		configCmd(),
 		imageCmd(),
+		kernelCmd(),
 		portForwardCmd(),
 		mountCmd(),
 		autostartCmd(),
@@ -61,6 +62,7 @@ func createCmd() *cobra.Command {
 	var sshKeyPath string
 	var dnsServers []string
 	var imageName string
+	var kernelName string
 	var mounts []string
 
 	cmd := &cobra.Command{
@@ -82,11 +84,20 @@ func createCmd() *cobra.Command {
 				return fmt.Errorf("VM '%s' already exists", name)
 			}
 
+			// Create image manager for validation
+			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+
 			// Validate image exists if specified
 			if imageName != "" {
-				imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
 				if !imgMgr.ImageExists(imageName) {
 					return fmt.Errorf("image '%s' not found. Use 'vmm image list' to see available images", imageName)
+				}
+			}
+
+			// Validate kernel exists if specified
+			if kernelName != "" {
+				if !imgMgr.KernelExists(kernelName) {
+					return fmt.Errorf("kernel '%s' not found. Use 'vmm kernel list' to see available kernels", kernelName)
 				}
 			}
 
@@ -106,6 +117,7 @@ func createCmd() *cobra.Command {
 			newVM.MemoryMB = memory
 			newVM.DiskSizeMB = disk
 			newVM.Image = imageName
+			newVM.Kernel = kernelName
 			newVM.MacAddress = newVM.GenerateMacAddress()
 			newVM.TapDevice = network.GenerateTapName(newVM.ID)
 			newVM.DNSServers = dnsServers
@@ -132,6 +144,9 @@ func createCmd() *cobra.Command {
 			fmt.Printf("  CPUs: %d, Memory: %d MB, Disk: %d MB\n", newVM.CPUs, newVM.MemoryMB, newVM.DiskSizeMB)
 			if newVM.Image != "" {
 				fmt.Printf("  Image: %s\n", newVM.Image)
+			}
+			if newVM.Kernel != "" {
+				fmt.Printf("  Kernel: %s\n", newVM.Kernel)
 			}
 			fmt.Printf("  TAP device: %s, MAC: %s\n", newVM.TapDevice, newVM.MacAddress)
 			if newVM.SSHPublicKey != "" {
@@ -160,6 +175,7 @@ func createCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sshKeyPath, "ssh-key", "", "Path to SSH public key file for root access")
 	cmd.Flags().StringSliceVar(&dnsServers, "dns", nil, "Custom DNS servers (can be specified multiple times)")
 	cmd.Flags().StringVar(&imageName, "image", "", "Name of rootfs image to use (from 'vmm image import')")
+	cmd.Flags().StringVar(&kernelName, "kernel", "", "Name of kernel to use (from 'vmm kernel import')")
 	cmd.Flags().StringArrayVar(&mounts, "mount", nil, "Mount host directory in VM (format: /host/path:tag[:ro|rw])")
 
 	return cmd
@@ -325,7 +341,9 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("failed to create VM rootfs: %w", err)
 			}
 			existingVM.RootfsPath = vmRootfs
-			existingVM.KernelPath = imgMgr.GetDefaultKernelPath()
+
+			// Set kernel path based on custom kernel or default
+			existingVM.KernelPath = imgMgr.GetKernelPath(existingVM.Kernel)
 
 			// Inject SSH key if configured
 			if existingVM.SSHPublicKey != "" {
@@ -767,6 +785,174 @@ Examples:
 	return cmd
 }
 
+func kernelCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "kernel",
+		Short: "Manage VM kernels",
+	}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List available kernels",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			paths := cfg.GetPaths()
+			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+
+			kernels, err := imgMgr.ListKernelsWithInfo()
+			if err != nil {
+				return fmt.Errorf("failed to list kernels: %w", err)
+			}
+
+			if len(kernels) == 0 {
+				fmt.Println("No kernels found. Run 'vmm image pull' to download the default kernel.")
+				return nil
+			}
+
+			fmt.Println("Available kernels:")
+			for _, k := range kernels {
+				sizeMB := float64(k.Size) / (1024 * 1024)
+				defaultMarker := ""
+				if k.IsDefault {
+					defaultMarker = " (default)"
+				}
+				fmt.Printf("  - %s%s (%.2f MB)\n", k.Name, defaultMarker, sizeMB)
+			}
+
+			return nil
+		},
+	}
+
+	var forceImport bool
+	importCmd := &cobra.Command{
+		Use:   "import <path>",
+		Short: "Import a custom kernel binary",
+		Long: `Import a custom kernel binary (vmlinux format).
+
+The kernel must be an uncompressed vmlinux ELF binary compatible with
+Firecracker. The architecture must match the host system.
+
+Examples:
+  vmm kernel import /path/to/vmlinux --name my-kernel
+  vmm kernel import ./vmlinux-6.1 --name kernel-6.1 --force`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			srcPath := args[0]
+			name, _ := cmd.Flags().GetString("name")
+
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+
+			if err := cfg.EnsureDirectories(); err != nil {
+				return fmt.Errorf("failed to create directories: %w", err)
+			}
+
+			paths := cfg.GetPaths()
+			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+
+			if err := imgMgr.ImportKernel(srcPath, name, forceImport); err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+	importCmd.Flags().String("name", "", "Name for the imported kernel (required)")
+	importCmd.Flags().BoolVarP(&forceImport, "force", "f", false, "Overwrite existing kernel with same name")
+	importCmd.MarkFlagRequired("name")
+
+	deleteCmd := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a custom kernel",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			paths := cfg.GetPaths()
+			imgMgr := image.NewManager(paths.Kernels, paths.Rootfs)
+
+			// Check if any VMs are using this kernel
+			vms, _ := vm.List(paths.VMs)
+			var usingVMs []string
+			for _, v := range vms {
+				if v.Kernel == name {
+					usingVMs = append(usingVMs, v.Name)
+				}
+			}
+			if len(usingVMs) > 0 {
+				fmt.Printf("Warning: The following VMs are using kernel '%s': %v\n", name, usingVMs)
+				fmt.Println("These VMs will fail to start if the kernel is deleted.")
+			}
+
+			if err := imgMgr.DeleteKernel(name); err != nil {
+				return err
+			}
+
+			fmt.Printf("Deleted kernel '%s'\n", name)
+			return nil
+		},
+	}
+
+	var buildVersion string
+	var buildName string
+	buildCmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build a kernel from source",
+		Long: `Build a Firecracker-compatible kernel from source.
+
+This command runs the build-kernel.sh script to compile a Linux kernel
+configured for Firecracker. Requires build dependencies to be installed.
+
+Supported kernel versions: 5.10, 6.1, 6.6
+
+Examples:
+  vmm kernel build --version 6.1 --name kernel-6.1
+  vmm kernel build --version 5.10 --name kernel-lts`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if buildVersion == "" {
+				return fmt.Errorf("--version is required (e.g., 5.10, 6.1, 6.6)")
+			}
+			if buildName == "" {
+				return fmt.Errorf("--name is required")
+			}
+
+			// Find the build script
+			scriptPath := "/usr/local/share/vmm/build-kernel.sh"
+			if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+				// Try relative path for development
+				scriptPath = "scripts/build-kernel.sh"
+				if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+					return fmt.Errorf("build-kernel.sh not found. Please install it to /usr/local/share/vmm/")
+				}
+			}
+
+			paths := cfg.GetPaths()
+			buildArgs := []string{scriptPath, "--version", buildVersion, "--name", buildName, "--output", paths.Kernels}
+
+			fmt.Printf("Building kernel %s as '%s'...\n", buildVersion, buildName)
+			fmt.Println("This may take a while depending on your system.")
+
+			buildExec := exec.Command("bash", buildArgs...)
+			buildExec.Stdout = os.Stdout
+			buildExec.Stderr = os.Stderr
+			buildExec.Stdin = os.Stdin
+
+			if err := buildExec.Run(); err != nil {
+				return fmt.Errorf("kernel build failed: %w", err)
+			}
+
+			fmt.Printf("\nKernel '%s' built successfully.\n", buildName)
+			return nil
+		},
+	}
+	buildCmd.Flags().StringVar(&buildVersion, "version", "", "Kernel version to build (e.g., 5.10, 6.1, 6.6)")
+	buildCmd.Flags().StringVar(&buildName, "name", "", "Name for the built kernel (required)")
+	buildCmd.MarkFlagRequired("version")
+	buildCmd.MarkFlagRequired("name")
+
+	cmd.AddCommand(listCmd, importCmd, deleteCmd, buildCmd)
+	return cmd
+}
+
 func portForwardCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "port-forward <name> <host-port>:<guest-port>",
@@ -967,7 +1153,9 @@ func autostartCmd() *cobra.Command {
 					continue
 				}
 				v.RootfsPath = vmRootfs
-				v.KernelPath = imgMgr.GetDefaultKernelPath()
+
+				// Set kernel path based on custom kernel or default
+				v.KernelPath = imgMgr.GetKernelPath(v.Kernel)
 
 				// Inject SSH key if configured
 				if v.SSHPublicKey != "" {

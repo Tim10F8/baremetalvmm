@@ -1,13 +1,16 @@
 package image
 
 import (
+	"debug/elf"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 // ImportDockerImage imports a Docker image as a VMM rootfs
@@ -771,4 +774,149 @@ func InjectSSHKey(rootfsPath, sshPublicKey string) error {
 	}
 
 	return nil
+}
+
+// KernelInfo contains information about a kernel
+type KernelInfo struct {
+	Name      string    // Kernel name (filename without path)
+	Path      string    // Full path to the kernel
+	Size      int64     // Size in bytes
+	ModTime   time.Time // Last modification time
+	IsDefault bool      // Whether this is the default kernel
+}
+
+// ImportKernel imports a custom kernel binary
+// It validates that the file is a valid ELF executable for the correct architecture
+func (m *Manager) ImportKernel(srcPath, name string, force bool) error {
+	destPath := filepath.Join(m.KernelDir, name)
+
+	// Check if kernel already exists
+	if _, err := os.Stat(destPath); err == nil {
+		if !force {
+			return fmt.Errorf("kernel '%s' already exists. Use --force to overwrite", name)
+		}
+	}
+
+	// Validate the kernel is a valid ELF binary
+	if err := validateKernelBinary(srcPath); err != nil {
+		return fmt.Errorf("invalid kernel binary: %w", err)
+	}
+
+	// Ensure kernel directory exists
+	if err := os.MkdirAll(m.KernelDir, 0755); err != nil {
+		return fmt.Errorf("failed to create kernel directory: %w", err)
+	}
+
+	// Copy the kernel
+	fmt.Printf("Importing kernel '%s' from %s...\n", name, srcPath)
+	if err := copyFile(srcPath, destPath); err != nil {
+		return fmt.Errorf("failed to copy kernel: %w", err)
+	}
+
+	// Get file info for size
+	info, err := os.Stat(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat kernel: %w", err)
+	}
+
+	fmt.Printf("Successfully imported kernel '%s'\n", name)
+	fmt.Printf("  Path: %s\n", destPath)
+	fmt.Printf("  Size: %.2f MB\n", float64(info.Size())/(1024*1024))
+	return nil
+}
+
+// validateKernelBinary checks that a file is a valid kernel ELF binary
+func validateKernelBinary(path string) error {
+	// Open the ELF file
+	f, err := elf.Open(path)
+	if err != nil {
+		return fmt.Errorf("not a valid ELF binary: %w", err)
+	}
+	defer f.Close()
+
+	// Check that it's an executable
+	if f.Type != elf.ET_EXEC {
+		return fmt.Errorf("not an executable (type: %s)", f.Type)
+	}
+
+	// Check architecture matches host
+	var expectedArch elf.Machine
+	switch runtime.GOARCH {
+	case "amd64":
+		expectedArch = elf.EM_X86_64
+	case "arm64":
+		expectedArch = elf.EM_AARCH64
+	default:
+		return fmt.Errorf("unsupported architecture: %s", runtime.GOARCH)
+	}
+
+	if f.Machine != expectedArch {
+		return fmt.Errorf("architecture mismatch: kernel is %s, host is %s", f.Machine, expectedArch)
+	}
+
+	return nil
+}
+
+// DeleteKernel removes a custom kernel
+func (m *Manager) DeleteKernel(name string) error {
+	// Prevent deleting the default kernel
+	if name == DefaultKernelName {
+		return fmt.Errorf("cannot delete the default kernel '%s'", DefaultKernelName)
+	}
+
+	path := filepath.Join(m.KernelDir, name)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("kernel '%s' not found", name)
+	}
+
+	return os.Remove(path)
+}
+
+// KernelExists checks if a kernel with the given name exists
+func (m *Manager) KernelExists(name string) bool {
+	path := filepath.Join(m.KernelDir, name)
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// GetKernelPath returns the full path to a kernel
+// If name is empty, returns the default kernel path
+func (m *Manager) GetKernelPath(name string) string {
+	if name == "" {
+		return m.GetDefaultKernelPath()
+	}
+	return filepath.Join(m.KernelDir, name)
+}
+
+// ListKernelsWithInfo returns detailed information about all available kernels
+func (m *Manager) ListKernelsWithInfo() ([]KernelInfo, error) {
+	entries, err := os.ReadDir(m.KernelDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []KernelInfo{}, nil
+		}
+		return nil, err
+	}
+
+	var kernels []KernelInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		kernels = append(kernels, KernelInfo{
+			Name:      entry.Name(),
+			Path:      filepath.Join(m.KernelDir, entry.Name()),
+			Size:      info.Size(),
+			ModTime:   info.ModTime(),
+			IsDefault: entry.Name() == DefaultKernelName,
+		})
+	}
+
+	return kernels, nil
 }
