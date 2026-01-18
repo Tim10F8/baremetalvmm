@@ -6,8 +6,30 @@ set -e
 
 INSTALL_DIR="/usr/local/bin"
 DATA_DIR="/var/lib/vmm"
-VMM_VERSION="0.1.0"
 GITHUB_REPO="raesene/baremetalvmm"
+
+# Get the latest version from GitHub API, fallback to default
+get_latest_version() {
+    local version=""
+    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+
+    # Try to fetch the latest release version
+    if command -v curl &> /dev/null; then
+        version=$(curl -fsSL "$api_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+    elif command -v wget &> /dev/null; then
+        version=$(wget -qO- "$api_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+    fi
+
+    # Fallback to default version if API call fails
+    if [ -z "$version" ]; then
+        echo "0.1.0"
+    else
+        echo "$version"
+    fi
+}
+
+# Allow override via environment variable, otherwise fetch from GitHub
+VMM_VERSION="${VMM_VERSION:-$(get_latest_version)}"
 
 echo "VMM Installer"
 echo "============="

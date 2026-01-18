@@ -82,6 +82,30 @@ and then to clean it up
 sudo vmm delete myvm
 ```
 
+## Custom Rootfs and kernel
+
+By default we get the kernel and rootfs from the Firecracker project. They're not amazingly useful or up to date, but they're a good starting point. If you want to run more complex commands and use-cases it makes sense to get a custom rootfs and kernel.
+
+### Custom rootfs
+
+The way this works is that vmm can get a docker image (needs docker installed) and turn it into a vmm base image, by injecting the necessary files for openssh server and the init system. So far this is all ubuntu based, so you want to stick with that for now. 
+
+The vmm image import command will handle that it, you give it the image to pull in docker format and a name to call it
+
+```bash
+sudo vmm image import ubuntu:24.04 --name ubuntu-24.04
+```
+
+### Custom kernel
+
+You'll likely want something newer the 4.4 based kernel. Here we've got a build script that should be able to set-up a newer kernel. Be aware it's going to download and compile a Linux kernel, so it'll take a while if you're running on a not very powerful machine and it needs disk space.
+
+This command should give you a relatively modern 6.1 based kernel.
+
+```bash
+sudo vmm kernel build --version 6.1 --name kernel-6.1
+```
+
 ## Commands
 
 ### VM Lifecycle

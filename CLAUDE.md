@@ -35,6 +35,7 @@ baremetalvmm/
 │   ├── build-kernel.sh       # Custom kernel build script
 │   └── vmm.service           # Systemd unit file
 ├── go.mod, go.sum            # Dependencies
+├── Makefile                  # Build with version info for local development
 ├── README.md                 # User documentation
 └── PLAN.md                   # Project requirements and status
 ```
@@ -101,6 +102,7 @@ vmm kernel delete <name>
 vmm kernel build --version <version> --name <name>
 vmm config show
 vmm config init
+vmm version [--json]
 vmm autostart   # Hidden, used by systemd
 vmm autostop    # Hidden, used by systemd
 ```
@@ -141,8 +143,14 @@ Note: Flags marked "configurable" can have defaults set in `~/.config/vmm/config
 
 ### Manual testing flow
 ```bash
-# Build
+# Build (with version info)
+make build
+
+# Or build quickly without version info
 go build -o vmm ./cmd/vmm/
+
+# Verify version info
+./vmm version
 
 # Test basic commands
 ./vmm config init
@@ -461,6 +469,40 @@ sudo vmm create myvm --cpus 4 --memory 2048
 ```
 
 **Backward compatibility**: Existing configs without `vm_defaults` continue to work unchanged.
+
+### Version Command (`cmd/vmm/main.go`)
+**Feature**: Display version, git commit, and build date information.
+**Implementation**:
+- Added `version`, `commit`, and `date` variables set at build time via ldflags
+- Added `vmm version` command with optional `--json` flag
+- Added `Version` field to root command for `--version` flag support
+- GoReleaser injects these values during release builds
+- Makefile provides version injection for local development builds
+
+**Build-time injection**:
+- `main.version` - Version string (e.g., "0.2.0" or "dev")
+- `main.commit` - Git commit hash (e.g., "abc1234")
+- `main.date` - Build timestamp (e.g., "2026-01-18T10:30:00Z")
+
+**Usage**:
+```bash
+# Default output
+vmm version
+# vmm version 0.2.0
+# commit: abc1234
+# built: 2026-01-18T10:30:00Z
+
+# JSON output
+vmm version --json
+# {"version":"0.2.0","commit":"abc1234","date":"2026-01-18T10:30:00Z"}
+
+# Short version flag
+vmm --version
+# vmm version 0.2.0
+
+# Build with version info (local development)
+make build && ./vmm version
+```
 
 ## Future Improvements (Not Yet Implemented)
 
