@@ -33,6 +33,7 @@ The install script will:
 - Fall back to building from source if download fails
 - Install the binary to `/usr/local/bin`
 - Download Firecracker v1.11.0
+- Download a pre-built Linux 6.1 kernel from GitHub releases
 - Create data directories in `/var/lib/vmm`
 - Install `build-kernel.sh` to `/usr/local/share/vmm` (for `vmm kernel build`)
 
@@ -68,7 +69,7 @@ First up (one time only) run the init command
 vmm config init
 ```
 
-Next up we need to pull the default kernel and root image, this is the ones provided by the firecracker project, we can change the rootfs with more commands and also use custom kernels (see Custom Kernels section). Again this is one-time should be present for future runs
+Next up we need to pull the default kernel and root image. The kernel is a pre-built Linux 6.1 kernel from our GitHub releases, and the rootfs is from the Firecracker project. We can change the rootfs with more commands and also use custom kernels (see Custom Kernels section). Again this is one-time, they should be present for future runs
 
 ```bash
 sudo vmm image pull
@@ -108,7 +109,7 @@ sudo vmm delete myvm
 
 ## Custom Rootfs and kernel
 
-By default we get the kernel and rootfs from the Firecracker project. They're not amazingly useful or up to date, but they're a good starting point. If you want to run more complex commands and use-cases it makes sense to get a custom rootfs and kernel.
+By default, `vmm image pull` downloads a pre-built Linux 6.1 kernel from our GitHub releases (built automatically via CI) and a rootfs from the Firecracker project. The default rootfs isn't amazingly useful or up to date, but it's a good starting point. If you want to run more complex use-cases it makes sense to get a custom rootfs.
 
 ### Custom rootfs
 
@@ -636,8 +637,8 @@ sudo vmm kernel delete kernel-6.1
 
 ### When to Use Custom Kernels
 
-- **Newer kernel features**: Run a newer kernel than the default (4.14)
-- **Security patches**: Use the latest LTS kernel with security fixes
+- **Newer kernel features**: Run a different kernel version than the default (6.1 LTS)
+- **Security patches**: Use a specific LTS kernel with security fixes
 - **Custom configurations**: Build kernels with specific options enabled
 - **Testing**: Test your application against different kernel versions
 
@@ -719,7 +720,7 @@ Ensure you're checking with `vmm list` (no sudo required). The tool correctly de
 # Install Go 1.21+
 # Clone the repo
 git clone https://github.com/raesene/baremetalvmm.git
-cd vmm
+cd baremetalvmm
 
 # Build
 go build -o vmm ./cmd/vmm/
