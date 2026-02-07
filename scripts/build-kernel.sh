@@ -99,28 +99,39 @@ check_dependencies() {
 }
 
 get_kernel_url() {
-    local version="$1"
-    local major_version="${version%%.*}"
+    local series="$1"
+    local major_version="${series%%.*}"
 
-    case "$version" in
-        5.10)
-            # Latest 5.10 LTS
-            echo "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.209.tar.xz"
-            ;;
-        6.1)
-            # Latest 6.1 LTS
-            echo "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.119.tar.xz"
-            ;;
-        6.6)
-            # Latest 6.6 LTS
-            echo "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.61.tar.xz"
-            ;;
+    # Validate series
+    case "$series" in
+        5.10|6.1|6.6) ;;
         *)
-            log_error "Unsupported kernel version: $version"
-            log_info "Supported versions: 5.10, 6.1, 6.6"
+            log_error "Unsupported kernel series: $series"
+            log_info "Supported series: 5.10, 6.1, 6.6"
             exit 1
             ;;
     esac
+
+    # Query kernel.org for the latest patch version in this series
+    local latest=""
+    if command -v jq &>/dev/null; then
+        latest=$(wget -qO- https://www.kernel.org/releases.json 2>/dev/null | \
+            jq -r --arg s "$series" \
+            '[.releases[] | select(.version | startswith($s + ".")) | .version] | sort_by(split(".") | map(tonumber)) | last')
+    fi
+
+    if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+        log_warn "Could not query kernel.org for latest $series version, using fallback"
+        # Fallback to known good versions
+        case "$series" in
+            5.10) latest="5.10.209" ;;
+            6.1)  latest="6.1.119" ;;
+            6.6)  latest="6.6.61" ;;
+        esac
+    fi
+
+    log_info "Resolved kernel series $series to version $latest"
+    echo "https://cdn.kernel.org/pub/linux/kernel/v${major_version}.x/linux-${latest}.tar.xz"
 }
 
 get_firecracker_config_url() {
