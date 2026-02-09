@@ -237,11 +237,19 @@ fi
 
 if [ -f /usr/local/share/vmm/build-kernel.sh ]; then
     rm -f /usr/local/share/vmm/build-kernel.sh
-    rmdir /usr/local/share/vmm 2>/dev/null || true
     echo -e "  ${GREEN}Removed /usr/local/share/vmm/build-kernel.sh${NC}"
 else
     echo "  /usr/local/share/vmm/build-kernel.sh not found"
 fi
+
+if [ -f /usr/local/share/vmm/build-rootfs.sh ]; then
+    rm -f /usr/local/share/vmm/build-rootfs.sh
+    echo -e "  ${GREEN}Removed /usr/local/share/vmm/build-rootfs.sh${NC}"
+else
+    echo "  /usr/local/share/vmm/build-rootfs.sh not found"
+fi
+
+rmdir /usr/local/share/vmm 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}VMM uninstalled successfully!${NC}"

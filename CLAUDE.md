@@ -16,7 +16,7 @@ VMM (Bare Metal MicroVM Manager) is a Go-based CLI tool for managing Firecracker
 - **Networking**: Linux TAP devices, bridges, iptables
 - **Storage**: JSON-based VM configs, ext4 rootfs images
 - **Service**: systemd for auto-start
-- **CI/CD**: GitHub Actions (GoReleaser for binary releases, kernel build workflow)
+- **CI/CD**: GitHub Actions (GoReleaser for binary releases, kernel build workflow, rootfs build workflow)
 
 ## Directory Structure
 
@@ -32,12 +32,14 @@ baremetalvmm/
 │   └── mount/mount.go        # Host directory mount management
 ├── .github/workflows/
 │   ├── release.yaml          # GoReleaser binary release on v* tags
-│   └── build-kernel.yml      # Automated kernel build + GitHub release
+│   ├── build-kernel.yml      # Automated kernel build + GitHub release
+│   └── build-rootfs.yml      # Automated rootfs build + GitHub release
 ├── scripts/
-│   ├── install.sh            # Installation script (binary + Firecracker + kernel)
+│   ├── install.sh            # Installation script (binary + Firecracker + kernel + rootfs)
 │   ├── uninstall.sh          # Complete removal script
 │   ├── install-service.sh    # Systemd service installation (optional)
 │   ├── build-kernel.sh       # Custom kernel build script
+│   ├── build-rootfs.sh       # Custom rootfs build script
 │   └── vmm.service           # Systemd unit file
 ├── .goreleaser.yaml          # GoReleaser configuration
 ├── go.mod, go.sum            # Dependencies
@@ -527,11 +529,17 @@ make build && ./vmm version
 **GitHub release tagging convention**:
 - `v*` tags → software releases (GoReleaser binary builds)
 - `kernel-*` tags → kernel releases (built by kernel workflow)
+- `rootfs-*` tags → rootfs releases (built by rootfs workflow, format: `rootfs-24.04-YYYYMMDD`)
 
 **Kernel download chain**:
 - `scripts/install.sh` → queries GitHub API for latest `kernel-*` release, downloads `vmlinux.bin`
 - `vmm image pull` (Go) → `findLatestKernelURL()` queries GitHub API, falls back to `FallbackKernelURL` (S3)
 - Both use `api.github.com/repos/raesene/baremetalvmm/releases` to find kernel assets
+
+**Rootfs download chain**:
+- `scripts/install.sh` → queries GitHub API for latest `rootfs-*` release, downloads `rootfs.ext4.gz`, decompresses with `gunzip`, falls back to S3 URL
+- `vmm image pull` (Go) → `findLatestRootfsURL()` queries GitHub API, downloads gzipped rootfs, decompresses with `compress/gzip`, falls back to `FallbackRootfsURL` (S3)
+- Both use `api.github.com/repos/raesene/baremetalvmm/releases` to find rootfs assets
 
 ### Dynamic Kernel Version Resolution (`scripts/build-kernel.sh`)
 **Feature**: Build script resolves the latest patch version dynamically from kernel.org.
@@ -540,6 +548,37 @@ make build && ./vmm version
 - `get_kernel_url()` queries `kernel.org/releases.json` via `jq` to find latest patch in a series
 - Falls back to hardcoded versions if `jq` is unavailable or query fails
 - Logs the resolved version: "Resolved kernel series 6.1 to version 6.1.162"
+
+### Default Rootfs Build (`scripts/build-rootfs.sh`, `.github/workflows/build-rootfs.yml`)
+**Feature**: Build Ubuntu 24.04-based rootfs images for Firecracker, published as GitHub releases.
+**Implementation**:
+- `scripts/build-rootfs.sh` creates ext4 rootfs from Docker base image
+- Exports Docker container filesystem, configures via chroot (systemd, SSH, networking), creates ext4 image, gzip compresses output
+- `.github/workflows/build-rootfs.yml` automates builds: manual dispatch, push to script/workflow, weekly Monday 07:00 UTC
+- Tag format: `rootfs-24.04-YYYYMMDD` — skips build if release already exists
+- Go code (`findLatestRootfsURL()`) and install script query GitHub API for `rootfs-*` releases, fall back to S3 URL
+
+**Build script parameters**:
+- `--name` (required) — output filename
+- `--output` (default: `/var/lib/vmm/images/rootfs`) — output directory
+- `--size` (default: 512) — image size in MB
+- `--base-image` (default: `ubuntu:24.04`) — Docker base image
+- `--no-cleanup` — keep temporary directory
+
+**Rootfs contents**:
+- systemd init, serial console on ttyS0, OpenSSH server (root key-only login)
+- iproute2, iputils-ping, dbus
+- systemd-networkd for eth0, /etc/fstab for /dev/vda
+- Locked root password (SSH key login only)
+
+**Usage**:
+```bash
+# Build locally
+sudo bash scripts/build-rootfs.sh --name rootfs.ext4 --size 512 --output /tmp
+
+# Decompress for use
+gunzip /tmp/rootfs.ext4.gz
+```
 
 ## Future Improvements (Not Yet Implemented)
 

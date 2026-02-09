@@ -168,6 +168,16 @@ elif [ -f "$(dirname "$0")/build-kernel.sh" ]; then
     echo "Installed build-kernel.sh to $SCRIPT_DIR"
 fi
 
+if [ -f "scripts/build-rootfs.sh" ]; then
+    cp scripts/build-rootfs.sh "$SCRIPT_DIR/build-rootfs.sh"
+    chmod +x "$SCRIPT_DIR/build-rootfs.sh"
+    echo "Installed build-rootfs.sh to $SCRIPT_DIR"
+elif [ -f "$(dirname "$0")/build-rootfs.sh" ]; then
+    cp "$(dirname "$0")/build-rootfs.sh" "$SCRIPT_DIR/build-rootfs.sh"
+    chmod +x "$SCRIPT_DIR/build-rootfs.sh"
+    echo "Installed build-rootfs.sh to $SCRIPT_DIR"
+fi
+
 # Download Firecracker if not present
 FC_VERSION="v1.11.0"
 FC_BIN="/usr/local/bin/firecracker"
@@ -230,6 +240,69 @@ if [ ! -f "$KERNEL_PATH" ]; then
     fi
 else
     echo "Kernel already exists at $KERNEL_PATH"
+fi
+
+# Download rootfs from GitHub releases if not present
+ROOTFS_PATH="$DATA_DIR/images/rootfs/rootfs.ext4"
+if [ ! -f "$ROOTFS_PATH" ]; then
+    echo "Downloading pre-built rootfs from GitHub releases..."
+    ROOTFS_URL=""
+
+    # Reuse RELEASES_JSON from the kernel section if available, otherwise fetch it
+    if [ -z "$RELEASES_JSON" ]; then
+        API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases"
+        if command -v curl &> /dev/null; then
+            RELEASES_JSON=$(curl -fsSL "$API_URL" 2>/dev/null)
+        elif command -v wget &> /dev/null; then
+            RELEASES_JSON=$(wget -qO- "$API_URL" 2>/dev/null)
+        fi
+    fi
+
+    if [ -n "$RELEASES_JSON" ]; then
+        # Find the latest release with a rootfs-* tag and extract the rootfs.ext4.gz asset URL
+        if command -v jq &> /dev/null; then
+            ROOTFS_URL=$(echo "$RELEASES_JSON" | jq -r '
+                [.[] | select(.tag_name | startswith("rootfs-"))] |
+                first |
+                .assets[] | select(.name == "rootfs.ext4.gz") |
+                .browser_download_url' 2>/dev/null)
+        else
+            # Fallback: parse JSON with grep/sed (works without jq)
+            ROOTFS_URL=$(echo "$RELEASES_JSON" | \
+                grep -A 50 '"tag_name": "rootfs-' | \
+                grep '"browser_download_url".*rootfs.ext4.gz' | \
+                head -1 | \
+                sed -E 's/.*"browser_download_url": "([^"]+)".*/\1/')
+        fi
+    fi
+
+    if [ -n "$ROOTFS_URL" ] && [ "$ROOTFS_URL" != "null" ]; then
+        echo "  Found rootfs in GitHub releases, downloading..."
+        if download_file "$ROOTFS_URL" "$ROOTFS_PATH.gz"; then
+            echo "  Decompressing rootfs..."
+            gunzip -f "$ROOTFS_PATH.gz"
+            echo "Rootfs downloaded to $ROOTFS_PATH"
+        else
+            rm -f "$ROOTFS_PATH.gz"
+            echo "  GitHub download failed, trying fallback URL..."
+            FALLBACK_URL="https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4"
+            if download_file "$FALLBACK_URL" "$ROOTFS_PATH"; then
+                echo "Rootfs downloaded to $ROOTFS_PATH (fallback)"
+            else
+                echo "Warning: Failed to download rootfs. Run 'sudo vmm image pull' later to download it."
+            fi
+        fi
+    else
+        echo "  No rootfs release found, trying fallback URL..."
+        FALLBACK_URL="https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4"
+        if download_file "$FALLBACK_URL" "$ROOTFS_PATH"; then
+            echo "Rootfs downloaded to $ROOTFS_PATH (fallback)"
+        else
+            echo "Warning: Failed to download rootfs. Run 'sudo vmm image pull' later to download it."
+        fi
+    fi
+else
+    echo "Rootfs already exists at $ROOTFS_PATH"
 fi
 
 echo ""

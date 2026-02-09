@@ -1,6 +1,7 @@
 package image
 
 import (
+	"compress/gzip"
 	"debug/elf"
 	"encoding/json"
 	"fmt"
@@ -381,8 +382,8 @@ const (
 	// Fallback kernel URL - used if GitHub API query fails
 	FallbackKernelURL = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
 
-	// Default rootfs URL (Firecracker quickstart)
-	DefaultRootfsURL = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4"
+	// Fallback rootfs URL (Firecracker quickstart, Ubuntu 18.04)
+	FallbackRootfsURL = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4"
 
 	DefaultKernelName = "vmlinux.bin"
 	DefaultRootfsName = "rootfs.ext4"
@@ -435,6 +436,88 @@ func findLatestKernelURL() string {
 	return ""
 }
 
+// findLatestRootfsURL queries GitHub releases for the latest rootfs-* release
+// and returns the download URL for the rootfs.ext4.gz asset.
+// Returns empty string if no rootfs release is found.
+func findLatestRootfsURL() string {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(GitHubAPI)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	var releases []ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return ""
+	}
+
+	// Find the first (most recent) release with a rootfs-* tag
+	for _, rel := range releases {
+		if !strings.HasPrefix(rel.TagName, "rootfs-") {
+			continue
+		}
+		for _, asset := range rel.Assets {
+			if asset.Name == "rootfs.ext4.gz" {
+				return asset.BrowserDownloadURL
+			}
+		}
+	}
+
+	return ""
+}
+
+// downloadAndDecompressGzip downloads a gzipped file and decompresses it to destPath
+func (m *Manager) downloadAndDecompressGzip(url, destPath string) error {
+	// Ensure directory exists
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	// Create temp file
+	tmpPath := destPath + ".tmp"
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		out.Close()
+		os.Remove(tmpPath) // Clean up temp file on error
+	}()
+
+	// Download
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: %s", resp.Status)
+	}
+
+	// Decompress gzip stream
+	gzReader, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	if _, err := io.Copy(out, gzReader); err != nil {
+		return fmt.Errorf("failed to decompress: %w", err)
+	}
+
+	out.Close()
+
+	// Rename to final path
+	return os.Rename(tmpPath, destPath)
+}
+
 // Manager handles kernel and rootfs image management
 type Manager struct {
 	KernelDir string
@@ -476,9 +559,24 @@ func (m *Manager) EnsureDefaultImages() error {
 	// Download rootfs if not exists
 	if _, err := os.Stat(rootfsPath); os.IsNotExist(err) {
 		fmt.Println("Downloading default rootfs (this may take a while)...")
-		if err := m.downloadFile(DefaultRootfsURL, rootfsPath); err != nil {
-			return fmt.Errorf("failed to download rootfs: %w", err)
+
+		// Try GitHub releases first (gzipped), fall back to S3 URL
+		rootfsURL := findLatestRootfsURL()
+		if rootfsURL != "" {
+			fmt.Println("  Found rootfs in GitHub releases")
+			if err := m.downloadAndDecompressGzip(rootfsURL, rootfsPath); err != nil {
+				fmt.Printf("  GitHub download failed (%v), trying fallback URL\n", err)
+				rootfsURL = ""
+			}
 		}
+
+		if rootfsURL == "" {
+			fmt.Println("  Using fallback URL")
+			if err := m.downloadFile(FallbackRootfsURL, rootfsPath); err != nil {
+				return fmt.Errorf("failed to download rootfs: %w", err)
+			}
+		}
+
 		fmt.Println("Rootfs downloaded successfully")
 	}
 
